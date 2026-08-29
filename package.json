@@ -1,0 +1,47 @@
+{
+  "name": "haeram-spec-creator",
+  "version": "0.1.0",
+  "description": "Versioned Claude and Codex skills distributed through npm.",
+  "type": "module",
+  "bin": {
+    "haeram-spec-creator": "./bin/haeram-spec-creator.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "validate": "node ./bin/haeram-spec-creator.mjs validate --allow-empty",
+    "pack:check": "node ./scripts/assert-pack.mjs",
+    "check": "npm test && npm run validate && npm run pack:check",
+    "release:check": "npm test && node ./bin/haeram-spec-creator.mjs validate && npm run pack:check",
+    "prepublishOnly": "npm run release:check"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hetarho/haeram-spec-creator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hetarho/haeram-spec-creator/issues"
+  },
+  "homepage": "https://github.com/hetarho/haeram-spec-creator#readme",
+  "keywords": [
+    "codex",
+    "claude",
+    "agent-skills",
+    "spec-driven-development"
+  ],
+  "license": "MIT"
+}
