@@ -23,7 +23,7 @@ description: >-
 ## 1. 시작
 - STATE 읽기 → log `- YYMMDD ideation <slug> start`. STATE에 `## ideation` 섹션(`| id | st |`)이 없으면 cfg 다음에 추가한다.
 - 이어하기: spec/ideation/에 st:open 문서가 있고 같은 주제면 그 문서로 계속한다. 새 주제면 새 파일.
-- 새 문서: `spec/ideation/<slug>.md`(slug=영문 kebab, FORMAT ideation 골격) 생성, STATE ideation 행 `<slug> | open@YYMMDD`.
+- 새 문서: 이 스킬 폴더의 assets/ideation.md를 `spec/ideation/<slug>.md`(slug=영문 kebab)로 복사해 채우고, STATE ideation 행 `<slug> | open@YYMMDD`.
 
 ## 2. 구체화 루프 (사용자가 끝났다고 할 때까지)
 한 라운드 = 질문·제안 2~4개 → 답 → **문서 즉시 갱신** → cfg.lang으로 짧은 현재 상태 요약. 이걸 반복한다.

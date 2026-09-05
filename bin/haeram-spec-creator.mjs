@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { checkSkills, discoverSkills, installSkills, SkillPackageError } from '../src/index.mjs'
+import { checkSkills, discoverSkills, installSkills, lintSpec, SkillPackageError } from '../src/index.mjs'
 import { getPackageInfo } from '../src/package-info.mjs'
 
 const HELP = `haeram-spec-creator
@@ -10,6 +10,7 @@ const HELP = `haeram-spec-creator
   haeram-spec-creator validate [--allow-empty]
   haeram-spec-creator install [--target <path>] [--agent both|claude|codex] [--dry-run] [--force]
   haeram-spec-creator check [--target <path>] [--agent both|claude|codex]
+  haeram-spec-creator lint [--target <path>]
 
 옵션:
   --target <path>  스킬을 설치하거나 검사할 프로젝트 (기본값: 현재 폴더)
@@ -117,6 +118,15 @@ async function main() {
     process.stdout.write(
       `스킬 동기화 상태 정상: ${result.skillNames.length}개 (${result.agents.join(', ')})\n`,
     )
+    return
+  }
+
+  if (command === 'lint') {
+    const result = await lintSpec(options)
+    for (const warning of result.warnings) process.stdout.write(`경고: ${warning}\n`)
+    if (!result.ok) throw new SkillPackageError('spec/ 문서가 FORMAT 불변식을 위반합니다.', result.errors)
+    const warningNote = result.warnings.length > 0 ? ` (경고 ${result.warnings.length}건)` : ''
+    process.stdout.write(`spec 정합성 정상: ssot ${result.counts.ssot}개, task ${result.counts.tasks}개${warningNote}\n`)
     return
   }
 

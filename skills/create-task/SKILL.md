@@ -38,5 +38,5 @@ ARCH·SSOT·기존 코드에 답이 있으면 묻지 않는다. 영역: 데이�
 - dep 그래프와 순서를 정리한다. 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
 
 ## 4. 마감
-- `tasks/T###.<slug>.md` 작성 → STATE: tasks 행 추가, ssot `tasked=rev`·pending `-`, next=`implement-task T###`(dep상 첫 것), log 1줄.
+- 태스크마다 이 스킬 폴더의 assets/task.md를 복사해 `tasks/T###.<slug>.md`로 채운다(`<...>` 전부 교체) → STATE: tasks 행 추가, ssot `tasked=rev`·pending `-`, next=`implement-task T###`(dep상 첫 것), log 1줄.
 - 보고: 태스크 목록과 순서 — novice에겐 각 태스크가 무엇을 만들어내는지 한 줄씩 설명.

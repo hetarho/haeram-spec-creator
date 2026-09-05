@@ -33,7 +33,7 @@ description: >-
 - 태스크는 질문 없이 완주 가능해야 정상이다. 구현 중 결정이 필요한 질문이 생기면 분해 실패 신호 — 임의로 정하지 말고, 기획 공백·모순이면 update-ssot 제안, 기술 결정 누락이면 blocked 후 create-task 재분해 제안.
 
 ## 4. 검증 (항상 이 순서로 마친다)
-① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다. 명령은 전부 ARCH의 verify 결정에서 가져온다. 마지막으로 done 직전 신선도 재확인(2단계와 동일) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
+① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx haeram-spec-creator lint`로 spec 정합성을 검사하고 위반은 고친다(CLI가 없으면 생략). ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다. 마지막으로 done 직전 신선도 재확인(2단계와 동일) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
 
 ## 5. 마감
 - 태스크 `## result`: 변경 파일, 특이사항, SSOT와 달라진 점(있으면 update-ssot 제안까지).

@@ -112,6 +112,18 @@ pnpm exec haeram-spec-creator install
 pnpm exec haeram-spec-creator check
 ```
 
+### Node 프로젝트가 아니어도 됩니다 (Python, Flutter, Go …)
+
+`package.json`이 없어도 됩니다. Node.js 런타임만 있으면 `npx`가 패키지를 임시로 받아 실행하므로, 프로젝트에는 스킬과 잠금 파일만 생기고 `node_modules`는 만들어지지 않습니다.
+
+```bash
+cd my-python-project
+npx haeram-spec-creator@latest install   # 최초 설치와 이후 업데이트 모두 이 명령
+npx haeram-spec-creator@latest check     # 동기화 확인
+```
+
+`@latest`가 실행 때마다 최신 버전을 확인하므로 업데이트도 같은 명령을 다시 실행하면 됩니다. 직접 수정하지 않은 스킬 파일만 새 버전으로 갱신되고, 수정한 파일은 충돌로 알려 줍니다.
+
 기본 설치 대상은 현재 프로젝트의 Claude Code와 Codex입니다.
 
 ```text
@@ -145,6 +157,10 @@ npx haeram-spec-creator install --dry-run
 
 # 설치본이 현재 패키지와 같은지 확인
 npx haeram-spec-creator check
+
+# spec/ 문서가 FORMAT 불변식을 지키는지 검사 (ID·상태 형식, rev/tasked 정합, 참조 무결성)
+npx haeram-spec-creator lint
+npx haeram-spec-creator lint --target ../my-project
 
 # 충돌한 로컬 파일을 패키지 버전으로 명시적으로 교체
 npx haeram-spec-creator install --force
