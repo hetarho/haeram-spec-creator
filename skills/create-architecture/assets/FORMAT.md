@@ -22,7 +22,7 @@
 - change kind: + added / ✎ modified / - removed (e.g. `AUTH-2✎`)
 - reference: →AUTH-3
 - acceptance check: `- [ ]` open → `- [v]` done (never mark done with x — [x] means rejected in SSOT)
-- rev: rN. +1 per content change, one chg line (`- rN YYMMDD <ID>-n✎ summary`). First write: `- r1 YYMMDD initial`
+- rev: rN. +1 per content change, one chg line (`- rN YYMMDD <ID>-n✎ summary`). First write: `- r1 YYMMDD initial`. A ✎ summary MUST keep the old value as `old→new` (e.g. `BM-11✎ limit 100→50`); a `-` summary states what was removed
 - date: YYMMDD (260905)
 - task st: `todo` → `doing@date.tag` → `done@date`. Stuck: `blocked@date` (one-line reason in the task's ## result). tag = 2-4 chars chosen by the claiming session
 - empty value: `-` (never leave a cell blank)

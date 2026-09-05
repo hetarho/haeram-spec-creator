@@ -27,7 +27,7 @@ STATE → 대상 SSOT 식별·정독 → log에 `- YYMMDD update-ssot <ID> start
 
 ## 3. 적용
 - 수정(✎)은 결정 라인 교체, 추가(+)는 새 번호, 철회는 지우지 말고 [x]로 상태만 변경.
-- rev+1, chg에 `rN YYMMDD <ID>-n✎ 요약` 1줄. 인용줄·플로우·제약도 동기화.
+- rev+1, chg에 `- rN YYMMDD <ID>-n✎ 요약` 1줄 — ✎(수정)는 요약에 이전 값을 반드시 `old→new`로 남기고(예: `BM-11✎ limit 100→50`), -(삭제)는 무엇이 없어졌는지 남긴다. 인용줄·플로우·제약도 동기화.
 
 ## 4. 마감
 - STATE: ssot rev 갱신 + pending에 델타 추가(`AUTH-2✎ AUTH-5+` — 단 tasked=0이면 `all` 유지) + [?] 수 갱신, 영향권에 doing 태스크가 있으면 log에 경고 1줄, next에 `create-task <ID>` / log 1줄.

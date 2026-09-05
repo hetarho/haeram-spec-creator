@@ -169,6 +169,19 @@ test('결정 라인 형식 위반과 존재하지 않는 결정 참조를 잡는
   })
 })
 
+test('✎ chg 항목에 old→new가 없으면 경고한다', async () => {
+  const noOld = ARCH.replace('- r2 260905 ARCH-2+', '- r2 260905 ARCH-1✎ stack changed')
+  await withFixture({ arch: noOld }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.warnings.some((w) => w.includes('old→new')))
+  })
+  const withOld = ARCH.replace('- r2 260905 ARCH-2+', '- r2 260905 ARCH-1✎ stack remix→next 15')
+  await withFixture({ arch: withOld }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.equal(result.warnings.some((w) => w.includes('old→new')), false)
+  })
+})
+
 test('파일 rev와 STATE rev 불일치는 오류, todo의 낡은 base는 경고다', async () => {
   const staleState = STATE.replace('| ARCH | 2 | 2 | - | 1 |', '| ARCH | 3 | 2 | ARCH-3+ | 1 |')
   await withFixture({ state: staleState }, async (root) => {

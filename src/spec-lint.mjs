@@ -166,6 +166,13 @@ export async function lintSpec({ targetRoot } = {}) {
     if (Number.isInteger(rev) && !new RegExp(`^\\s*-\\s+r${rev}\\b`, 'm').test(content)) {
       warnings.push(`ssot/${id}.md chg에 현재 rev(r${rev}) 항목이 없습니다.`)
     }
+    for (const chgLine of sections(content).get('chg') ?? []) {
+      const trimmed = chgLine.trim()
+      if (!trimmed.startsWith('- r')) continue
+      if (/[A-Z]{2,6}-\d+✎/.test(trimmed) && !trimmed.includes('→')) {
+        warnings.push(`ssot/${id}.md chg: ✎ 항목에 이전 값(old→new)이 없습니다: "${trimmed.slice(0, 60)}"`)
+      }
+    }
     ssotInfo.set(id, { rev, decisions })
   }
   for (const file of (await listIfExists(path.join(specRoot, 'ssot'))).filter((f) => f.endsWith('.md'))) {
