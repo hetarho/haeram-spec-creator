@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Task"
+  short_description: "태스크 하나를 선점·구현·검증"
+  default_prompt: "Use $implement-task to claim, implement, and verify the next spec task."
