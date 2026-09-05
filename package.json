@@ -4,7 +4,7 @@
   "description": "Versioned Claude and Codex skills distributed through npm.",
   "type": "module",
   "bin": {
-    "haeram-spec-creator": "./bin/haeram-spec-creator.mjs"
+    "haeram-spec-creator": "bin/haeram-spec-creator.mjs"
   },
   "exports": {
     ".": "./src/index.mjs"
