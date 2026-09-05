@@ -51,13 +51,13 @@ SSOT의 `rev`(현재 개정)와 STATE의 `tasked`(태스크로 소화된 개정)
 Claude Code나 Codex를 설치하려는 프로젝트에서 열고 다음 프롬프트를 붙여 넣으세요.
 
 ```text
-이 프로젝트에 haeram-spec-creator를 설치해줘.
-저장소 https://github.com/hetarho/haeram-spec-creator 의 README와 package.json을 먼저 확인하고,
-이 프로젝트의 개발 의존성으로 추가한 뒤 Claude Code와 Codex 양쪽에서 쓸 수 있게 설정해줘.
+이 프로젝트에 haeram-spec-creator 스킬셋을 설치해줘.
+의존성으로 추가하지 말고 npx로 실행해줘.
 
-실제 파일을 변경하기 전에 dry-run으로 설치 계획과 충돌 여부를 확인하고,
+먼저 `npx -y haeram-spec-creator@latest install --dry-run`으로 설치 계획과 충돌 여부를 확인하고,
 기존 스킬과 충돌하면 덮어쓰지 말고 나에게 알려줘.
-설치 후에는 포함된 스킬 목록과 동기화 상태까지 검증해줘.
+문제 없으면 `npx -y haeram-spec-creator@latest install`로 설치한 뒤,
+`npx -y haeram-spec-creator@latest check`로 스킬 목록과 동기화 상태까지 검증해줘.
 ```
 
 에이전트가 제시한 변경 계획을 확인한 뒤 실행을 승인하면 됩니다.
@@ -92,37 +92,26 @@ SSOT 변경사항 태스크로 쪼개줘.                        → create-task
 
 ## 직접 설치하기
 
-에이전트 대신 명령어를 직접 실행하려면 다음 방법을 사용합니다.
+### 기본: npx (권장 — Node 프로젝트가 아니어도 됩니다)
 
-### npm
-
-```bash
-npm install --save-dev haeram-spec-creator
-npx haeram-spec-creator install --dry-run
-npx haeram-spec-creator install
-npx haeram-spec-creator check
-```
-
-### pnpm
+이 패키지는 스킬을 프로젝트의 `.claude/`·`.codex/`로 복사하는 방식이라, 설치가 끝나면 패키지 자체는 프로젝트에 남을 필요가 없습니다. `package.json` 없이도(Python, Flutter, Go …) 동작하고 `node_modules`도 만들지 않습니다.
 
 ```bash
-pnpm add --save-dev haeram-spec-creator
-pnpm exec haeram-spec-creator install --dry-run
-pnpm exec haeram-spec-creator install
-pnpm exec haeram-spec-creator check
-```
-
-### Node 프로젝트가 아니어도 됩니다 (Python, Flutter, Go …)
-
-`package.json`이 없어도 됩니다. Node.js 런타임만 있으면 `npx`가 패키지를 임시로 받아 실행하므로, 프로젝트에는 스킬과 잠금 파일만 생기고 `node_modules`는 만들어지지 않습니다.
-
-```bash
-cd my-python-project
+cd my-project
 npx haeram-spec-creator@latest install   # 최초 설치와 이후 업데이트 모두 이 명령
 npx haeram-spec-creator@latest check     # 동기화 확인
 ```
 
 `@latest`가 실행 때마다 최신 버전을 확인하므로 업데이트도 같은 명령을 다시 실행하면 됩니다. 직접 수정하지 않은 스킬 파일만 새 버전으로 갱신되고, 수정한 파일은 충돌로 알려 줍니다.
+
+### 옵션: 개발 의존성으로 버전 고정
+
+CI에서 `lint`를 돌리거나 스킬셋 버전 변경을 PR 리뷰로 관리하고 싶은 Node 프로젝트라면 의존성으로 고정할 수 있습니다.
+
+```bash
+npm install --save-dev haeram-spec-creator   # pnpm add --save-dev haeram-spec-creator
+npx haeram-spec-creator install
+```
 
 기본 설치 대상은 현재 프로젝트의 Claude Code와 Codex입니다.
 
