@@ -33,7 +33,8 @@
 ## Skeletons (section order fixed; only (opt) may be omitted)
 - ssot: `# <ID> <name>` / `> rN | <one-line purpose>` / `## decisions` / `## flow`(opt) / `## constraints`(opt) / `## chg`
 - task: `# T### <title>` / `> st:.. | ssot:<decision IDs, space-separated> | base:<ID>@rev(per referenced domain, space-separated) | dep:T### or -` / `## goal` / `## acceptance` / `## impl notes` / `## result`(filled at done·blocked — empty means untouched)
-- STATE: `## cfg` / `## ssot` / `## tasks` / `## next` / `## log`
+- ideation: `# IDEATION <slug>` / `> st:.. | <one-line want>` / `## vision` / `## explored` / `## shape` / `## domains` / `## open` — file ideation/<slug>.md, slug=kebab-case
+- STATE: `## cfg` / `## ideation`(opt) / `## ssot` / `## tasks` / `## next` / `## log`
 
 ## State rules
 - STATE ssot row `id|rev|tasked|pending|[?]`: rev=current, tasked=rev consumed into tasks, pending=unconsumed delta summary (`AUTH-5+ AUTH-2✎`), [?]=open decision count. tasked < rev ⇒ create-task target.
@@ -41,6 +42,7 @@
 - STATE tasks row's ssot cell holds domains only (`ARCH BM`) — decision IDs live in the task file's quote line.
 - doing·done tasks are immutable. Exception: the implementing session updating its own task's st·checks·result. Content changes become a new task.
 - Planning changes go only through update-ssot(rev+1) → STATE pending → create-task. Never edit tasks directly.
+- ideation st: `open@date` → `ready@date` → `converted@date` (in the quote line + STATE ideation row `id|st`). Explored items reuse [o]/[x]/[?]. A domains line converted into a SSOT gets `→<ID>`; the doc becomes converted when every [o] domain has one.
 - STATE next: 1-3 lines. Every skill updates next on exit.
 - STATE log: delete beyond 20 lines — detailed history lives in each SSOT's chg and in task files.
 

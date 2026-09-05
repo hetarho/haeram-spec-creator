@@ -22,6 +22,7 @@ description: >-
 ## 1. 시작
 STATE 읽기 → log에 `- YYMMDD create-ssot <topic> start` → 기존 ssot/를 훑어 중복·연관 확인.
 같은 도메인이 이미 있으면 update-ssot로 전환을 제안한다.
+spec/ideation/에 st:ready 문서가 있으면 그것이 재료다 — domains의 해당 줄과 vision·shape·explored를 읽고, 2단계 인터뷰는 문서의 공백과 [?]만 채운다. 전환을 마친 domains 줄에 →<ID>를 달고, 모든 [o] 도메인이 전환되면 문서 st→converted@YYMMDD + STATE ideation 행 갱신.
 
 ## 2. 기획 인터뷰
 아래를 전부 결정으로 만들 수 있을 때까지 묻는다. 한 번에 2~4개씩. 이미 문서·대화에 답이 있으면 묻지 않는다.

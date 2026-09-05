@@ -5,7 +5,7 @@
 Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제약, 결정 사항, 완료 조건을 먼저 명확히 하고 각 단계의 결과를 다음 단계의 입력으로 이어 가도록 돕습니다. 이 저장소의 핵심은 라이브러리 API가 아니라 AI 에이전트가 필요할 때 불러 쓰는 스킬이며, npm 패키지는 여러 프로젝트에 그 스킬을 안전하게 설치하고 동기화하기 위한 배포 수단입니다.
 
 > [!TIP]
-> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 6종: `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `create-narrative`.
+> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 7종: `ideation` · `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `create-narrative`.
 
 ## 핵심 개념
 
@@ -19,6 +19,7 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 
 | 순서 | 스킬 | 역할 | 하는 일 | 산출물 |
 | --- | --- | --- | --- | --- |
+| 아이디어 | `ideation` | 기획 전문가 | 흐릿한 아이디어를 발산·수렴 루프로 함께 구체화, SSOT 전환용 도메인 분할까지 | `spec/ideation/<slug>.md` |
 | 0 | `create-architecture` | 엔지니어 | `spec/` 초기화 + 사용자 수준 캘리브레이션 + 아키텍처 인터뷰 | `spec/STATE.md` `spec/FORMAT.md` `spec/ssot/ARCH.md` |
 | 1 | `create-ssot` | 기획자 | 기획 인터뷰로 도메인 SSOT 작성 | `spec/ssot/<ID>.md` |
 | 수시 | `update-ssot` | 기획자 | 기획 변경 반영 — rev+1, 변경 로그, 파급 표시 | 갱신된 SSOT + STATE pending |
@@ -32,6 +33,7 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 spec/
 ├── STATE.md      # 관제탑: cfg(사용자 수준) · SSOT rev 현황 · 태스크 보드 · next · log
 ├── FORMAT.md     # 모든 spec 문서의 압축 표기 규칙 (ID, 기호, 골격, 상태 규칙)
+├── ideation/     # (선택) 아이디어 구체화 문서 — ready가 되면 create-ssot의 재료
 ├── ssot/         # 도메인별 SSOT — 결정([o]/[?]/[x])과 근거만, rev로 변경 추적
 └── tasks/        # 태스크 — 완료기준·구현메모·결과, SSOT rev 스탬프(base)로 신선도 검증
 ```
