@@ -13,7 +13,7 @@
 |---|---|---|
 | SSOT domain | 2-6 uppercase (AUTH, ARCH) | file ssot/<ID>.md |
 | decision | <ID>-<n> (AUTH-3) | n is permanent — never reused, even after rejection |
-| task | T### (T012) | file tasks/T###.<slug>.md · slug=kebab-case · numbering=max existing+1 · never reused |
+| task | T### (T012) | file tasks/T###.<slug>.md (moved to tasks/done/ at done) · slug=kebab-case · numbering=max existing+1 counting tasks/done/ · never reused |
 
 ## Notation
 - decision line: `- <ID>-<n> [o|?|x] <content>` + ` ← <reason>` only when there was a trade-off
@@ -41,6 +41,7 @@
 - tasked=0 (new domain) ⇒ pending is always `all`, meaning everything up to the current rev. Later changes are absorbed into `all`.
 - STATE tasks row's ssot cell holds domains only (`ARCH BM`) — decision IDs live in the task file's quote line.
 - doing·done tasks are immutable. Exception: the implementing session updating its own task's st·checks·result. Content changes become a new task.
+- STATE tasks table holds remaining work only (todo·doing·blocked). At done: set st `done@date` in the file, move it to tasks/done/, delete the STATE row, leave one log line. A dep absent from the table is satisfied iff tasks/done/ holds that task's file.
 - Planning changes go only through update-ssot(rev+1) → STATE pending → create-task. Never edit tasks directly.
 - ideation st: `open@date` → `ready@date` → `converted@date` (in the quote line + STATE ideation row `id|st`). Explored items reuse [o]/[x]/[?]. A domains line converted into a SSOT gets `→<ID>`; the doc becomes converted when every [o] domain has one.
 - STATE next: 1-3 lines. Every skill updates next on exit.

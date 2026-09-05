@@ -87,7 +87,7 @@ export async function lintSpec({ targetRoot } = {}) {
   const specRoot = path.join(path.resolve(targetRoot ?? process.cwd()), 'spec')
   const errors = []
   const warnings = []
-  const counts = { ssot: 0, tasks: 0 }
+  const counts = { ssot: 0, tasks: 0, done: 0 }
 
   const state = await readIfExists(path.join(specRoot, 'STATE.md'))
   if (state === null) {
@@ -187,6 +187,23 @@ export async function lintSpec({ targetRoot } = {}) {
     if (fileByTaskId.has(named[1])) errors.push(`태스크 파일 중복: ${named[1]} (${fileByTaskId.get(named[1])}, ${file})`)
     fileByTaskId.set(named[1], file)
   }
+  // tasks/done/ 아카이브: 표에 없어야 하고, 파일 st는 done@여야 한다
+  const doneIds = new Set()
+  for (const file of (await listIfExists(path.join(specRoot, 'tasks', 'done'))).filter((f) => f.endsWith('.md'))) {
+    const named = file.match(/^(T\d{3,})\./)
+    if (!named) {
+      warnings.push(`tasks/done/${file}: T###.<slug>.md 형식이 아닙니다.`)
+      continue
+    }
+    doneIds.add(named[1])
+    if (taskIds.has(named[1])) errors.push(`${named[1]}: tasks/done/ 아카이브와 STATE tasks 표에 동시에 있습니다 — done 행은 삭제하세요.`)
+    if (fileByTaskId.has(named[1])) errors.push(`${named[1]}: tasks/와 tasks/done/에 파일이 모두 있습니다.`)
+    const content = await readIfExists(path.join(specRoot, 'tasks', 'done', file))
+    const archivedSt = quoteFields(quoteLine(content ?? '') ?? '').get('st')
+    if (!archivedSt?.startsWith('done@')) {
+      errors.push(`tasks/done/${file}: 아카이브된 태스크의 st가 done@가 아닙니다: ${archivedSt ?? '(없음)'}`)
+    }
+  }
   for (const row of taskRows) {
     const [id, , ssotCell, depCell, st] = row
     if (!TASK_ID.test(id ?? '')) {
@@ -195,8 +212,9 @@ export async function lintSpec({ targetRoot } = {}) {
     }
     if (!TASK_ST.test(st ?? '')) errors.push(`${id}: st 형식 오류: ${st} (todo|doing@날짜.tag|done@날짜|blocked@날짜)`)
     else if (st.startsWith('doing@') && !st.includes('.')) warnings.push(`${id}: doing에 세션 tag가 없습니다 (doing@날짜.tag).`)
+    else if (st.startsWith('done@')) warnings.push(`${id}: done 태스크는 표에서 삭제하고 tasks/done/으로 아카이브하세요.`)
     for (const dep of splitRefs(depCell)) {
-      if (!taskIds.has(dep)) errors.push(`${id}: dep ${dep}가 tasks 표에 없습니다.`)
+      if (!taskIds.has(dep) && !doneIds.has(dep)) errors.push(`${id}: dep ${dep}가 tasks 표에도 tasks/done/에도 없습니다.`)
     }
     for (const domain of splitRefs(ssotCell)) {
       if (!ssotIds.has(domain)) errors.push(`${id}: ssot ${domain}이 STATE ssot 표에 없습니다.`)
@@ -252,6 +270,7 @@ export async function lintSpec({ targetRoot } = {}) {
     if (!taskIds.has(id)) errors.push(`tasks/${file}이 STATE tasks 표에 없습니다.`)
   }
   counts.tasks = taskIds.size
+  counts.done = doneIds.size
 
   // ideation (optional)
   const ideationRows = stateSections.has('ideation') ? tableRows(stateSections.get('ideation')) : []

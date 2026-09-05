@@ -126,7 +126,7 @@ async function main() {
     for (const warning of result.warnings) process.stdout.write(`경고: ${warning}\n`)
     if (!result.ok) throw new SkillPackageError('spec/ 문서가 FORMAT 불변식을 위반합니다.', result.errors)
     const warningNote = result.warnings.length > 0 ? ` (경고 ${result.warnings.length}건)` : ''
-    process.stdout.write(`spec 정합성 정상: ssot ${result.counts.ssot}개, task ${result.counts.tasks}개${warningNote}\n`)
+    process.stdout.write(`spec 정합성 정상: ssot ${result.counts.ssot}개, 남은 task ${result.counts.tasks}개, 완료 ${result.counts.done}개${warningNote}\n`)
     return
   }
 

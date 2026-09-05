@@ -35,7 +35,7 @@ ARCH·SSOT·기존 코드에 답이 있으면 묻지 않는다. 영역: 데이�
 - 크기 상한은 모델 능력 기준: 기본은 지금 분해 중인 모델 자신("내가 이걸 한 세션에 완주할 수 있나"). 사용자가 구현에 쓸 모델을 지정하면 그 모델 기준 — 약한 모델일수록 잘게, 강한 모델이면 응집된 큰 단위.
 - acceptance에는 그 변경을 검증하는 테스트가 포함된다. 예외는 ARCH에 테스트 제외 [o] 결정이 있을 때뿐.
 - 각 태스크(FORMAT 골격): goal 1줄 / acceptance(검증 가능한 체크리스트) / impl notes(여기서 결정한 스키마·계약·라이브러리와 근거) / 인용줄에 st·ssot(관련 결정 ID)·base(`<ID>@rev`)·dep.
-- dep 그래프와 순서를 정리한다. 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
+- dep 그래프와 순서를 정리한다. dep은 표의 활성 태스크 또는 `tasks/done/`의 완료 태스크를 가리킬 수 있고, 채번은 tasks/done/까지 포함한 최대 번호+1. 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
 
 ## 4. 마감
 - 태스크마다 이 스킬 폴더의 assets/task.md를 복사해 `tasks/T###.<slug>.md`로 채운다(`<...>` 전부 교체) → STATE: tasks 행 추가, ssot `tasked=rev`·pending `-`, next=`implement-task T###`(dep상 첫 것), log 1줄.

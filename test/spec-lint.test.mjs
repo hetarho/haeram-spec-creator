@@ -22,13 +22,13 @@ const STATE = `# STATE
 ## tasks
 | id | title | ssot | dep | st |
 |---|---|---|---|---|
-| T001 | scaffold | ARCH | - | done@260905 |
 | T002 | api | ARCH | T001 | todo |
 
 ## next
 - implement-task T002
 
 ## log
+- 260905 T001 done
 - 260905 create-task ARCH start
 `
 
@@ -76,17 +76,27 @@ first api
 ## result
 `
 
-async function writeFixture(root, { state = STATE, arch = ARCH, tasks = { 'T001.scaffold.md': T001, 'T002.api.md': T002 } } = {}) {
+async function writeFixture(
+  root,
+  {
+    state = STATE,
+    arch = ARCH,
+    tasks = { 'T002.api.md': T002 },
+    done = { 'T001.scaffold.md': T001 },
+  } = {},
+) {
   const specRoot = path.join(root, 'spec')
   await mkdir(path.join(specRoot, 'ssot'), { recursive: true })
-  await mkdir(path.join(specRoot, 'tasks'), { recursive: true })
+  await mkdir(path.join(specRoot, 'tasks', 'done'), { recursive: true })
   await writeFile(path.join(specRoot, 'STATE.md'), state)
   await writeFile(path.join(specRoot, 'FORMAT.md'), '# FORMAT\n')
   await writeFile(path.join(specRoot, 'ssot', 'ARCH.md'), arch)
   for (const [name, content] of Object.entries(tasks)) {
     await writeFile(path.join(specRoot, 'tasks', name), content)
   }
-  return specRoot
+  for (const [name, content] of Object.entries(done)) {
+    await writeFile(path.join(specRoot, 'tasks', 'done', name), content)
+  }
 }
 
 async function withFixture(overrides, run) {
@@ -99,14 +109,15 @@ async function withFixture(overrides, run) {
   }
 }
 
-test('규칙을 지킨 spec은 오류 없이 통과한다', async () => {
+test('규칙을 지킨 spec은 오류 없이 통과하고, 아카이브된 done이 dep을 충족한다', async () => {
   await withFixture({}, async (root) => {
     const result = await lintSpec({ targetRoot: root })
     assert.deepEqual(result.errors, [])
     assert.equal(result.ok, true)
     assert.equal(result.counts.ssot, 1)
-    assert.equal(result.counts.tasks, 2)
-    // done 태스크의 오래된 base는 stale 경고를 만들지 않는다
+    assert.equal(result.counts.tasks, 1)
+    assert.equal(result.counts.done, 1)
+    // 아카이브된 done 태스크는 어떤 경고도 만들지 않는다
     assert.equal(result.warnings.some((w) => w.includes('T001')), false)
   })
 })
@@ -121,18 +132,30 @@ test('tasked > rev 는 오류다', async () => {
 })
 
 test('표에 있는 태스크의 파일이 없으면 오류다', async () => {
-  await withFixture({ tasks: { 'T001.scaffold.md': T001 } }, async (root) => {
+  await withFixture({ tasks: {} }, async (root) => {
     const result = await lintSpec({ targetRoot: root })
     assert.equal(result.ok, false)
     assert.ok(result.errors.some((e) => e.includes('T002') && e.includes('파일이 없습니다')))
   })
 })
 
-test('없는 태스크를 dep으로 참조하면 오류다', async () => {
+test('표에도 아카이브에도 없는 dep 참조는 오류다', async () => {
   const broken = STATE.replace('| T002 | api | ARCH | T001 | todo |', '| T002 | api | ARCH | T009 | todo |')
   await withFixture({ state: broken }, async (root) => {
     const result = await lintSpec({ targetRoot: root })
     assert.ok(result.errors.some((e) => e.includes('dep T009')))
+  })
+})
+
+test('done 행이 표에 남아 있으면 경고, 아카이브와 동시 존재는 오류다', async () => {
+  const withDoneRow = STATE.replace(
+    '| T002 | api | ARCH | T001 | todo |',
+    '| T001 | scaffold | ARCH | - | done@260905 |\n| T002 | api | ARCH | T001 | todo |',
+  )
+  await withFixture({ state: withDoneRow }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.warnings.some((w) => w.includes('T001') && w.includes('아카이브하세요')))
+    assert.ok(result.errors.some((e) => e.includes('T001') && e.includes('동시에 있습니다')))
   })
 })
 

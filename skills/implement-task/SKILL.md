@@ -18,7 +18,7 @@ description: >-
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
 
 ## 1. 선택 + 선점 (다른 무엇보다 먼저)
-- 인자 T###이 없으면 STATE tasks에서 dep이 전부 done인 첫 todo를 고른다. doing인 태스크는 다른 세션 소유 — 절대 잡지 않는다. 회수는 사용자가 명시적으로 지시할 때만(todo 복귀 후 진행).
+- 인자 T###이 없으면 STATE tasks에서 dep이 전부 충족된 첫 todo를 고른다(dep 충족 = 그 ID가 표에 없고 `tasks/done/`에 파일이 있음). doing인 태스크는 다른 세션 소유 — 절대 잡지 않는다. 회수는 사용자가 명시적으로 지시할 때만(todo 복귀 후 진행).
 - **즉시 선점**: 세션 태그(2~4자)를 정하고 STATE st→`doing@YYMMDD.tag` + log `- YYMMDD T### claimed (tag)`, 태스크 인용줄 st도 갱신. 코드 읽기·추론은 그 다음이다.
 - **선점 확인**: 쓰기 직후 STATE를 다시 읽어 그 태스크의 doing이 자기 tag인지 확인한다. 다른 세션 tag면 경합에서 진 것 — 물러나서 다음 todo를 잡는다.
 
@@ -37,5 +37,6 @@ description: >-
 
 ## 5. 마감
 - 태스크 `## result`: 변경 파일, 특이사항, SSOT와 달라진 점(있으면 update-ssot 제안까지).
-- STATE: st→`done@YYMMDD`, next 갱신(다음 todo), log 1줄.
+- 태스크 파일: st→`done@YYMMDD` 갱신 후 `spec/tasks/done/`으로 이동(아카이브).
+- STATE: 해당 행 삭제 — tasks 표는 남은 일만 남긴다. next 갱신(다음 todo), log `- YYMMDD T### done` 1줄.
 - 보고는 cfg.level대로 — novice: 무엇이 가능해졌고 어떻게 확인하는지 / expert: 변경 요약과 리뷰 포인트. 커밋은 요청받았을 때만.
