@@ -4,8 +4,8 @@
 
 Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제약, 결정 사항, 완료 조건을 먼저 명확히 하고 각 단계의 결과를 다음 단계의 입력으로 이어 가도록 돕습니다. 이 저장소의 핵심은 라이브러리 API가 아니라 AI 에이전트가 필요할 때 불러 쓰는 스킬이며, npm 패키지는 여러 프로젝트에 그 스킬을 안전하게 설치하고 동기화하기 위한 배포 수단입니다.
 
-> [!IMPORTANT]
-> 스킬 6종(`create-architecture`, `create-ssot`, `update-ssot`, `create-task`, `implement-task`, `create-narrative`)은 `skills/`에 포함되어 있지만 아직 npm에는 배포 전입니다. 배포 전에는 이 저장소를 클론한 뒤 `node ./bin/haeram-spec-creator.mjs install --target <프로젝트 경로>`로 설치할 수 있습니다.
+> [!TIP]
+> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 6종: `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `create-narrative`.
 
 ## 핵심 개념
 
