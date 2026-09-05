@@ -17,3 +17,7 @@
 ## 검증
 - `npm run check` — 테스트 + 스킬 frontmatter/구조 검증 + 패키징 검증. 스킬 수정 후 항상 실행.
 - 로컬 설치 테스트: `node ./bin/haeram-spec-creator.mjs install --target <경로>` 후 `check --target <경로>`.
+
+## 배포
+- main 푸시 시 release.yml이 자동 publish — 단 package.json 버전이 npm에 아직 없을 때만(가드 스텝이 건너뜀). 릴리스는 `npm version patch` 후 푸시.
+- npm 인증은 Trusted Publishing(OIDC) — 토큰 시크릿 없음. npmjs.com 패키지 설정에 GitHub Actions(hetarho/haeram-spec-creator, release.yml)가 등록돼 있어야 한다.

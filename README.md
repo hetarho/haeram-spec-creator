@@ -192,6 +192,15 @@ npm run check
 - `npm run release:check`: 스킬이 하나 이상 있는지까지 검사합니다.
 - `prepublishOnly`: 배포 직전에 `release:check`를 다시 실행합니다.
 
+### 릴리스
+
+`package.json`의 버전을 올려 `main`에 푸시하면 GitHub Actions(`release.yml`)가 npm에 자동 배포합니다. 이미 배포된 버전이면 배포를 건너뛰므로, 버전을 올리지 않은 일반 푸시는 안전합니다.
+
+```bash
+npm version patch   # 또는 minor / major — 버전 커밋과 태그가 함께 생성됩니다
+git push origin main --follow-tags
+```
+
 ## 라이선스
 
 [MIT](./LICENSE)

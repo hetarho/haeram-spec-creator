@@ -2,8 +2,8 @@ name: Publish Package
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -20,7 +20,19 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
       - run: npm ci
-      - run: node scripts/assert-release-tag.mjs
-      - run: npm run release:check
-      - run: npm publish
-
+      - name: Skip when this version is already on npm
+        id: guard
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          PUBLISHED="$(npm view "haeram-spec-creator@${VERSION}" version 2>/dev/null || true)"
+          if [ -n "$PUBLISHED" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "haeram-spec-creator@${VERSION} is already on npm — skipping publish."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "haeram-spec-creator@${VERSION} is not on npm yet — publishing."
+          fi
+      - if: steps.guard.outputs.publish == 'true'
+        run: npm run release:check
+      - if: steps.guard.outputs.publish == 'true'
+        run: npm publish
