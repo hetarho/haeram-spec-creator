@@ -5,13 +5,13 @@
 Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제약, 결정 사항, 완료 조건을 먼저 명확히 하고 각 단계의 결과를 다음 단계의 입력으로 이어 가도록 돕습니다. 이 저장소의 핵심은 라이브러리 API가 아니라 AI 에이전트가 필요할 때 불러 쓰는 스킬이며, npm 패키지는 여러 프로젝트에 그 스킬을 안전하게 설치하고 동기화하기 위한 배포 수단입니다.
 
 > [!TIP]
-> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 7종: `ideation` · `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `create-narrative`.
+> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 8종: `ideation` · `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `create-narrative`.
 
 ## 핵심 개념
 
 이 스킬셋은 세 가지 원칙 위에 설계되어 있습니다.
 
-1. **역할 분리** — SSOT(기획)는 **기획자** 역할의 에이전트가 기획 관점 질문(목적·타겟·범위·플로우·정책)으로 만들고, 태스크(구현 계획)는 **엔지니어** 역할의 에이전트가 개발 관점 질문(데이터 모델·API·엣지·마이그레이션)으로 만듭니다. 기획 문서에 기술 결정이, 구현 단계에 기획 재논의가 섞이지 않습니다.
+1. **역할 분리** — SSOT(기획)는 **기획자** 역할의 에이전트가 기획 관점 질문(목적·타겟·범위·플로우·정책)으로 만들고, 태스크(구현 계획)는 **엔지니어** 역할의 에이전트가 개발 관점 질문(데이터 모델·API·엣지·마이그레이션)으로 만듭니다. 기획 문서에 기술 결정이, 구현 단계에 기획 재논의가 섞이지 않습니다. 기획 쪽에 변경을 제안하는 `ideation`이 있듯, 개발 쪽에는 코드 품질을 대변해 리팩토링을 주장하는 **리뷰어**(`review-code`)가 있습니다 — 채택은 언제나 사용자가 합니다.
 2. **사용자 수준 적응** — 최초 1회 캘리브레이션으로 `expert / mid / novice`를 정하면 모든 질문과 보고가 그 수준에 맞춰집니다. expert에게는 선택지를 용어로만 나열하고 세부·엣지까지 직접 묻고, mid에게는 선택지에 장단점을 한 줄씩 붙이고, novice에게는 기술명 대신 "무엇이 어떻게 되는지"를 물은 뒤 기술 결정은 에이전트가 내리고 한 줄로 보고합니다.
 3. **문서 먼저** — 모든 스킬은 질문·추론·구현을 시작하기 전에 관제탑 문서(`spec/STATE.md`)에 시작을 기록하고, 상태가 바뀌는 즉시 반영합니다. 병렬 세션들은 이 파일 하나로 서로의 상황을 파악하므로 어떤 세션에서든 "다음 태스크 구현해줘", "SSOT 변경분 태스크로 쪼개줘"가 바로 통합니다.
 
@@ -23,8 +23,9 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 | 0 | `create-architecture` | 엔지니어 | `spec/` 초기화 + 사용자 수준 캘리브레이션 + 아키텍처 인터뷰 | `spec/STATE.md` `spec/FORMAT.md` `spec/ssot/ARCH.md` |
 | 1 | `create-ssot` | 기획자 | 기획 인터뷰로 도메인 SSOT 작성 | `spec/ssot/<ID>.md` |
 | 수시 | `update-ssot` | 기획자 | 기획 변경 반영 — rev+1, 변경 로그, 파급 표시 | 갱신된 SSOT + STATE pending |
-| 2 | `create-task` | 엔지니어 | SSOT 변경분(pending)을 개발 인터뷰와 함께 태스크로 분해 | `spec/tasks/T###.md` |
+| 2 | `create-task` | 엔지니어 | SSOT 변경분(pending)과 채택된 리뷰 finding을 개발 인터뷰와 함께 태스크로 분해 | `spec/tasks/T###.md` |
 | 3 | `implement-task` | 엔지니어 | 태스크 선점(doing) → 구현 → 검증(test·lint·format·CI/CD) → done | 코드 + 갱신된 태스크/STATE |
+| 수시 | `review-code` | 리뷰어 | 코드를 ARCH 컨벤션·개발 관점에서 점검해 우선순위 붙은 리팩토링 finding을 제안, 사용자가 채택 | `spec/review/<slug>.md` |
 | 필요시 | `create-narrative` | 작가 | spec 전체를 사람이 읽기 좋은 한국어 이야기로 엮음 | `spec/NARRATIVE.md` |
 
 설치된 프로젝트에는 다음 구조가 생깁니다.
@@ -35,6 +36,7 @@ spec/
 ├── FORMAT.md     # 모든 spec 문서의 압축 표기 규칙 (ID, 기호, 골격, 상태 규칙)
 ├── ideation/     # (선택) 아이디어 구체화 문서 — ready가 되면 create-ssot의 재료
 ├── ssot/         # 도메인별 SSOT — 결정([o]/[?]/[x])과 근거만, rev로 변경 추적
+├── review/       # (선택) 코드 리뷰 finding — 채택([o])된 것이 ready가 되면 create-task의 재료
 └── tasks/        # 남은 태스크(todo·doing·blocked)만 — 완료기준·구현메모·결과, base 스탬프로 신선도 검증
     └── done/     # 완료된 태스크 아카이브 — STATE 표는 항상 남은 일만 보여줍니다
 ```
@@ -89,6 +91,10 @@ SSOT 변경사항 태스크로 쪼개줘.                        → create-task
 
 ```text
 다음 태스크 구현해줘.                                → implement-task
+```
+
+```text
+리팩토링할 데 있는지 코드 점검해줘.                   → review-code
 ```
 
 ## 직접 설치하기
@@ -148,7 +154,7 @@ npx haeram-spec-creator install --dry-run
 # 설치본이 현재 패키지와 같은지 확인
 npx haeram-spec-creator check
 
-# spec/ 문서가 FORMAT 불변식을 지키는지 검사 (ID·상태 형식, rev/tasked 정합, 참조 무결성)
+# spec/ 문서가 FORMAT 불변식을 지키는지 검사 (ID·상태 형식, rev/tasked 정합, 참조 무결성, SSOT 골격 밖 섹션·산문)
 npx haeram-spec-creator lint
 npx haeram-spec-creator lint --target ../my-project
 

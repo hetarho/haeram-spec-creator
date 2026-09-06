@@ -29,6 +29,15 @@ STATE → 대상 SSOT 식별·정독 → log에 `- YYMMDD update-ssot <ID> start
 - 수정(✎)은 결정 라인 교체, 추가(+)는 새 번호, 철회는 지우지 말고 [x]로 상태만 변경.
 - rev+1, chg에 `- rN YYMMDD <ID>-n✎ 요약` 1줄 — ✎(수정)는 요약에 이전 값을 반드시 `old→new`로 남기고(예: `BM-11✎ limit 100→50`), -(삭제)는 무엇이 없어졌는지 남긴다. 인용줄·플로우·제약도 동기화.
 
+**최종 점검** — 확인 요청 전에 한 줄씩 통과시킨다. SSOT에는 결과만 남는다. 요청·대화의 흔적은 태스크 파일(1회용)에는 있어도 되지만 SSOT에는 절대 남기지 않는다.
+- 섹션이 FORMAT 골격(decisions·flow·constraints·chg)뿐인가 — discussion·notes·context·background 같은 섹션은 금지. 내용이 결정이면 decisions로 흡수, 아니면 삭제.
+- 요청·대화 흔적이 없는가 — "user asked / as discussed / changed because ..." 류 문구, 인터뷰 순서, 누가 언제 무엇을 말했는지. 남는 것은 결정과 ← 이유뿐.
+- 한 줄이 한 결정인가 — 여러 문장짜리 불릿은 쪼개거나 [?]로 등록. 배경 서사·반복 없음.
+- ← 이유는 트레이드오프에만 붙었는가 — 자명한 결정에 이유를 달지 않는다.
+- 폐기된 대안은 [x] 한 줄뿐인가 — 왜 논의됐는지 설명하지 않는다.
+- chg는 `- rN YYMMDD 요약` 한 줄씩인가 — 변경 경위 서술 금지, ✎는 old→new만.
+- `<...>` 자리표시·빈 (opt) 섹션이 없는가.
+
 ## 4. 마감
 - STATE: ssot rev 갱신 + pending에 델타 추가(`AUTH-2✎ AUTH-5+` — 단 tasked=0이면 `all` 유지) + [?] 수 갱신, 영향권에 doing 태스크가 있으면 log에 경고 1줄, next에 `create-task <ID>` / log 1줄.
 - 보고(level별): 바뀐 결정, 파급 범위, 다음 단계.

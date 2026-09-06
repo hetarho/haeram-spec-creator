@@ -3,8 +3,9 @@ name: create-task
 description: >-
   엔지니어 역할로 SSOT 변경분(STATE pending)을 구현 태스크(spec/tasks/T###.md)로 분해한다. "task로
   쪼개줘 / 작업 계획 세워줘 / 변경사항 태스크로 만들어줘" 일 때 사용. STATE의 rev/tasked 차이와 SSOT
-  chg로 무엇이 새로 생겼고 어디가 바뀌었는지 스스로 파악한다. 개발 관점 질문만 한다(데이터 모델·API·
-  엣지·마이그레이션). 구현은 implement-task.
+  chg로 무엇이 새로 생겼고 어디가 바뀌었는지 스스로 파악한다. review-code가 뽑아 사용자가 채택한
+  리팩토링 finding(spec/review/, st:ready)도 같은 방식으로 태스크화한다. 개발 관점 질문만 한다(데이터
+  모델·API·엣지·마이그레이션). 구현은 implement-task.
 ---
 
 # create-task — SSOT 델타 → 태스크
@@ -19,10 +20,11 @@ description: >-
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
 
 ## 1. 스코프와 델타
-- 스코프: 사용자가 지정한 도메인, 없으면 STATE ssot에서 pending 있는(= tasked < rev) 전부.
-- log에 `- YYMMDD create-task <IDs> start`.
-- 델타 파악: 각 SSOT chg의 tasked+1..rev 줄 + 해당 결정 원문. tasked=0이면 도메인 전체가 신규. ARCH의 관련 결정도 읽는다(태스크가 따를 기준).
-- 델타가 코드에 영향이 없으면(문구 정리, 컨벤션 서술 변경 등) 태스크 없이 소화한다: ssot `tasked=rev`·pending `-`, log에 `- YYMMDD <ID> rN..rM no-op (no code impact)` 1줄. 영향 여부가 확실하지 않으면 태스크를 만든다.
+입력은 두 종류다 — **SSOT 델타**(기획 변경)와 **리뷰 finding**(review-code가 뽑고 사용자가 채택한 리팩토링). 사용자가 지정하지 않으면 둘 다 처리한다.
+- SSOT: 사용자가 지정한 도메인, 없으면 STATE ssot에서 pending 있는(= tasked < rev) 전부. log에 `- YYMMDD create-task <IDs> start`.
+  - 델타 파악: 각 SSOT chg의 tasked+1..rev 줄 + 해당 결정 원문. tasked=0이면 도메인 전체가 신규. ARCH의 관련 결정도 읽는다(태스크가 따를 기준).
+  - 델타가 코드에 영향이 없으면(문구 정리, 컨벤션 서술 변경 등) 태스크 없이 소화한다: ssot `tasked=rev`·pending `-`, log에 `- YYMMDD <ID> rN..rM no-op (no code impact)` 1줄. 영향 여부가 확실하지 않으면 태스크를 만든다.
+- 리뷰: spec/review/에서 st:ready인 문서(사용자가 `review/<slug>`를 지정하면 그것만). 대상은 `→T###`가 아직 없는 [o] finding — [x]·[?]는 건드리지 않는다. log에 `- YYMMDD create-task review/<slug> start`.
 
 ## 2. 개발 인터뷰 (필요한 것만)
 ARCH·SSOT·기존 코드에 답이 있으면 묻지 않는다. 영역: 데이터 모델/스키마, API·인터페이스 계약, 상태·에러·엣지 처리, 기존 데이터 마이그레이션, 성능·보안 요구, 테스트 범위.
@@ -35,8 +37,11 @@ ARCH·SSOT·기존 코드에 답이 있으면 묻지 않는다. 영역: 데이�
 - 크기 상한은 모델 능력 기준: 기본은 지금 분해 중인 모델 자신("내가 이걸 한 세션에 완주할 수 있나"). 사용자가 구현에 쓸 모델을 지정하면 그 모델 기준 — 약한 모델일수록 잘게, 강한 모델이면 응집된 큰 단위.
 - acceptance에는 그 변경을 검증하는 테스트가 포함된다. 예외는 ARCH에 테스트 제외 [o] 결정이 있을 때뿐.
 - 각 태스크(FORMAT 골격): goal 1줄 / acceptance(검증 가능한 체크리스트) / impl notes(여기서 결정한 스키마·계약·라이브러리와 근거) / 인용줄에 st·ssot(관련 결정 ID)·base(`<ID>@rev`)·dep.
+- 리뷰 태스크: finding 하나 = 태스크 하나가 기본. 같은 파일·같은 원인이면 묶고, 한 세션에 못 끝낼 finding은 쪼갠다. 인용줄 ssot는 이 변경이 지키게 만드는 ARCH 결정(없으면 `-`), base는 항상 `ARCH@rev`. impl notes 첫 줄은 `- from review/<slug> Fn`. acceptance에 "동작 불변 — 기존 테스트 통과"와 finding이 요구하는 테스트를 넣는다. 기획 결정을 바꾸는 태스크는 만들지 않는다 — 그런 finding은 update-ssot로 넘기고 [?]로 되돌린다.
 - dep 그래프와 순서를 정리한다. dep은 표의 활성 태스크 또는 `tasks/done/`의 완료 태스크를 가리킬 수 있고, 채번은 tasks/done/까지 포함한 최대 번호+1. 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
 
 ## 4. 마감
-- 태스크마다 이 스킬 폴더의 assets/task.md를 복사해 `tasks/T###.<slug>.md`로 채운다(`<...>` 전부 교체) → STATE: tasks 행 추가, ssot `tasked=rev`·pending `-`, next=`implement-task T###`(dep상 첫 것), log 1줄.
+- 태스크마다 이 스킬 폴더의 assets/task.md를 복사해 `tasks/T###.<slug>.md`로 채운다(`<...>` 전부 교체) → STATE: tasks 행 추가(리뷰 태스크의 ssot 셀은 `ARCH`), next=`implement-task T###`(dep상 첫 것), log 1줄.
+- SSOT에서 만든 태스크: ssot 행 `tasked=rev`·pending `-`.
+- 리뷰에서 만든 태스크: 문서의 finding 끝에 `→T###`, 모든 [o]가 전환되면 문서 st→`converted@YYMMDD` + STATE review 행 갱신. ssot 행(tasked·pending)은 건드리지 않는다.
 - 보고: 태스크 목록과 순서 — novice에겐 각 태스크가 무엇을 만들어내는지 한 줄씩 설명.

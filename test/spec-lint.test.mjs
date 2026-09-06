@@ -76,6 +76,26 @@ first api
 ## result
 `
 
+const REVIEW_STATE = STATE.replace(
+  '## tasks\n',
+  '## review\n| id | st |\n|---|---|\n| api-260906 | ready@260906 |\n\n## tasks\n',
+)
+
+const REVIEW = `# REVIEW api-260906
+> st:ready@260906 | scope:src/api | at:abc1234 | base:ARCH@2
+
+## summary
+- handlers duplicate validation
+
+## findings
+- F1 [o] P1 src/api/*.ts: request validation copied in 3 handlers ← one fix must be applied 3 times
+- F2 [x] P3 src/api/util.ts: rename helpers ← not worth the churn
+- F3 [o] P2 src/api/health.ts: no test ← regressions go unnoticed →T002
+
+## notes
+- -
+`
+
 async function writeFixture(
   root,
   {
@@ -83,11 +103,16 @@ async function writeFixture(
     arch = ARCH,
     tasks = { 'T002.api.md': T002 },
     done = { 'T001.scaffold.md': T001 },
+    review = {},
   } = {},
 ) {
   const specRoot = path.join(root, 'spec')
   await mkdir(path.join(specRoot, 'ssot'), { recursive: true })
   await mkdir(path.join(specRoot, 'tasks', 'done'), { recursive: true })
+  if (Object.keys(review).length > 0) await mkdir(path.join(specRoot, 'review'), { recursive: true })
+  for (const [name, content] of Object.entries(review)) {
+    await writeFile(path.join(specRoot, 'review', name), content)
+  }
   await writeFile(path.join(specRoot, 'STATE.md'), state)
   await writeFile(path.join(specRoot, 'FORMAT.md'), '# FORMAT\n')
   await writeFile(path.join(specRoot, 'ssot', 'ARCH.md'), arch)
@@ -182,6 +207,40 @@ test('✎ chg 항목에 old→new가 없으면 경고한다', async () => {
   })
 })
 
+test('SSOT의 골격 밖 섹션은 오류, 산문 줄과 섹션 순서 위반은 경고다', async () => {
+  const withDiscussion = ARCH.replace(
+    '## chg',
+    '## discussion\n- user asked for next because the team knows it\n\n## chg',
+  )
+  await withFixture({ arch: withDiscussion }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.equal(result.ok, false)
+    assert.ok(result.errors.some((e) => e.includes('골격 밖 섹션') && e.includes('## discussion')))
+  })
+  const withProse = ARCH.replace(
+    '## chg',
+    '## constraints\nWe discussed this at length and decided to keep it simple.\n\n## chg',
+  )
+  await withFixture({ arch: withProse }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.warnings.some((w) => w.includes('constraints') && w.includes('산문 줄')))
+  })
+  const reordered = ARCH.replace('## decisions', '## chg\n- r2 260905 ARCH-2+\n- r1 260905 initial\n\n## decisions').replace(
+    /## chg\n- r2 260905 ARCH-2\+\n- r1 260905 initial\n$/,
+    '',
+  )
+  await withFixture({ arch: reordered }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.warnings.some((w) => w.includes('섹션 순서')))
+  })
+  const noChg = ARCH.replace(/## chg[\s\S]*$/, '')
+  await withFixture({ arch: noChg }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((e) => e.includes('## chg 섹션이 없습니다')))
+  })
+})
+
 test('파일 rev와 STATE rev 불일치는 오류, todo의 낡은 base는 경고다', async () => {
   const staleState = STATE.replace('| ARCH | 2 | 2 | - | 1 |', '| ARCH | 3 | 2 | ARCH-3+ | 1 |')
   await withFixture({ state: staleState }, async (root) => {
@@ -189,6 +248,37 @@ test('파일 rev와 STATE rev 불일치는 오류, todo의 낡은 base는 경고
     assert.ok(result.errors.some((e) => e.includes('rev(r2)') && e.includes('STATE rev(3)')))
     assert.ok(result.warnings.some((w) => w.includes('T002') && w.includes('base ARCH@2')))
   })
+})
+
+test('리뷰 문서: 규칙을 지키면 통과하고, →T### 참조와 finding 형식을 검사한다', async () => {
+  await withFixture({ state: REVIEW_STATE, review: { 'api-260906.md': REVIEW } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.equal(result.ok, true)
+  })
+  const badRef = REVIEW.replace('→T002', '→T099')
+  const badLine = badRef.replace('- F2 [x] P3', '- F2 [x]')
+  await withFixture({ state: REVIEW_STATE, review: { 'api-260906.md': badLine } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((e) => e.includes('F3') && e.includes('→T099')))
+    assert.ok(result.errors.some((e) => e.includes('finding 형식 오류') && e.includes('F2')))
+  })
+})
+
+test('리뷰 문서: converted인데 태스크 없는 [o] finding이 남으면 오류, 표에 없는 파일은 오류다', async () => {
+  const convertedState = REVIEW_STATE.replace('| api-260906 | ready@260906 |', '| api-260906 | converted@260906 |')
+  const converted = REVIEW.replace('st:ready@260906', 'st:converted@260906')
+  await withFixture({ state: convertedState, review: { 'api-260906.md': converted } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((e) => e.includes('converted인데') && e.includes('1개')))
+  })
+  await withFixture(
+    { state: REVIEW_STATE, review: { 'api-260906.md': REVIEW, 'stray-260906.md': REVIEW } },
+    async (root) => {
+      const result = await lintSpec({ targetRoot: root })
+      assert.ok(result.errors.some((e) => e.includes('stray-260906.md') && e.includes('STATE review 표에 없습니다')))
+    },
+  )
 })
 
 test('spec이 없는 프로젝트는 부트스트랩 안내 오류를 낸다', async () => {

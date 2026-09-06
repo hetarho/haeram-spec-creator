@@ -4,8 +4,11 @@ import path from 'node:path'
 const DOMAIN_ID = /^[A-Z]{2,6}$/
 const TASK_ID = /^T\d{3,}$/
 const TASK_ST = /^(todo|doing@\d{6}(\.[A-Za-z0-9]{2,8})?|done@\d{6}|blocked@\d{6})$/
-const IDEATION_ST = /^(open|ready|converted)@\d{6}$/
+const DOC_ST = /^(open|ready|converted)@\d{6}$/ // ideation · review
+const FINDING_LINE = /^-\s+F(\d+)\s+\[(o|x|\?)\]\s+P[123]\s+\S/
 const LEVELS = new Set(['expert', 'mid', 'novice', '?'])
+const SSOT_SECTIONS = ['decisions', 'flow', 'constraints', 'chg']
+const SSOT_REQUIRED = ['decisions', 'chg']
 
 async function readIfExists(filePath) {
   try {
@@ -143,9 +146,30 @@ export async function lintSpec({ targetRoot } = {}) {
       errors.push(`ssot/${id}.md의 rev(r${revMatch[1]})와 STATE rev(${rev})가 다릅니다.`)
     }
 
+    // skeleton: fixed sections only, in order, bullets only (FORMAT principle 6)
+    const ssotSections = sections(content)
+    for (const name of SSOT_REQUIRED) {
+      if (!ssotSections.has(name)) errors.push(`ssot/${id}.md에 ## ${name} 섹션이 없습니다.`)
+    }
+    let lastIndex = -1
+    for (const [name, lines] of ssotSections) {
+      const index = SSOT_SECTIONS.indexOf(name)
+      if (index === -1) {
+        errors.push(`ssot/${id}.md에 FORMAT 골격 밖 섹션이 있습니다: ## ${name} — 결정이면 decisions로 흡수하고, 아니면 삭제하세요.`)
+        continue
+      }
+      if (index < lastIndex) warnings.push(`ssot/${id}.md 섹션 순서가 골격과 다릅니다: ## ${name}`)
+      lastIndex = index
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed === '' || trimmed.startsWith('- ')) continue
+        warnings.push(`ssot/${id}.md ${name}에 불릿이 아닌 산문 줄이 있습니다: "${trimmed.slice(0, 60)}"`)
+      }
+    }
+
     const decisions = new Set()
     let openCount = 0
-    const decisionLines = (sections(content).get('decisions') ?? []).filter((line) => line.trim().startsWith('- '))
+    const decisionLines = (ssotSections.get('decisions') ?? []).filter((line) => line.trim().startsWith('- '))
     if (decisionLines.length === 0) warnings.push(`ssot/${id}.md의 decisions 섹션이 비어 있습니다.`)
     for (const line of decisionLines) {
       const trimmed = line.trim()
@@ -166,7 +190,7 @@ export async function lintSpec({ targetRoot } = {}) {
     if (Number.isInteger(rev) && !new RegExp(`^\\s*-\\s+r${rev}\\b`, 'm').test(content)) {
       warnings.push(`ssot/${id}.md chg에 현재 rev(r${rev}) 항목이 없습니다.`)
     }
-    for (const chgLine of sections(content).get('chg') ?? []) {
+    for (const chgLine of ssotSections.get('chg') ?? []) {
       const trimmed = chgLine.trim()
       if (!trimmed.startsWith('- r')) continue
       if (/[A-Z]{2,6}-\d+✎/.test(trimmed) && !trimmed.includes('→')) {
@@ -285,7 +309,7 @@ export async function lintSpec({ targetRoot } = {}) {
   const ideationFiles = (await listIfExists(path.join(specRoot, 'ideation'))).filter((f) => f.endsWith('.md'))
   for (const row of ideationRows) {
     const [id, st] = row
-    if (!IDEATION_ST.test(st ?? '')) errors.push(`ideation ${id}: st 형식 오류: ${st} (open|ready|converted@날짜)`)
+    if (!DOC_ST.test(st ?? '')) errors.push(`ideation ${id}: st 형식 오류: ${st} (open|ready|converted@날짜)`)
     if (!ideationFiles.includes(`${id}.md`)) errors.push(`ideation/${id}.md 파일이 없습니다.`)
   }
   for (const file of ideationFiles) {
@@ -293,6 +317,63 @@ export async function lintSpec({ targetRoot } = {}) {
     if (!ideationIds.has(id)) {
       const target = stateSections.has('ideation') ? errors : warnings
       target.push(`ideation/${file}이 STATE ideation 표에 없습니다.`)
+    }
+  }
+
+  // review (optional)
+  const reviewRows = stateSections.has('review') ? tableRows(stateSections.get('review')) : []
+  const reviewIds = new Set(reviewRows.map((row) => row[0]))
+  const reviewFiles = (await listIfExists(path.join(specRoot, 'review'))).filter((f) => f.endsWith('.md'))
+  for (const row of reviewRows) {
+    const [id, st] = row
+    if (!DOC_ST.test(st ?? '')) errors.push(`review ${id}: st 형식 오류: ${st} (open|ready|converted@날짜)`)
+    const content = await readIfExists(path.join(specRoot, 'review', `${id}.md`))
+    if (content === null) {
+      errors.push(`review/${id}.md 파일이 없습니다.`)
+      continue
+    }
+    const fields = quoteFields(quoteLine(content) ?? '')
+    for (const key of ['st', 'scope', 'at', 'base']) {
+      if (!fields.has(key)) errors.push(`review/${id}.md: 인용줄에 ${key}: 필드가 없습니다.`)
+    }
+    if (fields.get('st') && fields.get('st') !== st) {
+      warnings.push(`review ${id}: 파일 st(${fields.get('st')})와 STATE st(${st})가 다릅니다 — 진행 상태의 진실은 STATE.`)
+    }
+    const base = fields.get('base')?.match(/^([A-Z]{2,6})@(\d+)$/)
+    if (fields.has('base') && !base) errors.push(`review/${id}.md: base 형식 오류: ${fields.get('base')} (ARCH@rev)`)
+    else if (base) {
+      const info = ssotInfo.get(base[1])
+      if (!info) errors.push(`review/${id}.md: base 도메인 ${base[1]}이 없습니다.`)
+      else if (Number(base[2]) < info.rev && !(st ?? '').startsWith('converted@')) {
+        warnings.push(`review ${id}: base ${base[0]} < 현재 r${info.rev} — ARCH가 바뀐 뒤의 리뷰가 아닙니다.`)
+      }
+    }
+    const seen = new Set()
+    let untasked = 0
+    for (const line of (sections(content).get('findings') ?? []).filter((l) => l.trim().startsWith('- '))) {
+      const trimmed = line.trim()
+      const finding = trimmed.match(FINDING_LINE)
+      if (!finding) {
+        errors.push(`review/${id}.md finding 형식 오류: "${trimmed.slice(0, 60)}" (- Fn [?|o|x] P1|P2|P3 where: what)`)
+        continue
+      }
+      if (seen.has(finding[1])) errors.push(`review/${id}.md finding 번호 중복: F${finding[1]}`)
+      seen.add(finding[1])
+      const taskRef = trimmed.match(/→(T\d{3,})\b/)
+      if (taskRef && !taskIds.has(taskRef[1]) && !doneIds.has(taskRef[1])) {
+        errors.push(`review/${id}.md F${finding[1]}: →${taskRef[1]}가 tasks 표에도 tasks/done/에도 없습니다.`)
+      }
+      if (finding[2] === 'o' && !taskRef) untasked += 1
+    }
+    if ((st ?? '').startsWith('converted@') && untasked > 0) {
+      errors.push(`review ${id}: converted인데 →T### 없는 [o] finding이 ${untasked}개 있습니다.`)
+    }
+  }
+  for (const file of reviewFiles) {
+    const id = file.replace(/\.md$/, '')
+    if (!reviewIds.has(id)) {
+      const target = stateSections.has('review') ? errors : warnings
+      target.push(`review/${file}이 STATE review 표에 없습니다.`)
     }
   }
 
