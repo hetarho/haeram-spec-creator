@@ -18,6 +18,7 @@ description: >-
 2. **문서 먼저**: 질문·추론·구현을 시작하기 전에 STATE.md에 시작을 기록하고(log 1줄 + 해당 st), 상태가 바뀔 때마다 즉시 반영한다. 병렬 세션은 STATE.md로만 서로를 안다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
+5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
 ## 1. 스코프와 델타
 입력은 두 종류다 — **SSOT 델타**(기획 변경)와 **리뷰 finding**(review-code가 뽑고 사용자가 채택한 리팩토링). 사용자가 지정하지 않으면 둘 다 처리한다.
@@ -38,7 +39,8 @@ ARCH·SSOT·기존 코드에 답이 있으면 묻지 않는다. 영역: 데이�
 - acceptance에는 그 변경을 검증하는 테스트가 포함된다. 예외는 ARCH에 테스트 제외 [o] 결정이 있을 때뿐.
 - 각 태스크(FORMAT 골격): goal 1줄 / acceptance(검증 가능한 체크리스트) / impl notes(여기서 결정한 스키마·계약·라이브러리와 근거) / 인용줄에 st·ssot(관련 결정 ID)·base(`<ID>@rev`)·dep.
 - 리뷰 태스크: finding 하나 = 태스크 하나가 기본. 같은 파일·같은 원인이면 묶고, 한 세션에 못 끝낼 finding은 쪼갠다. 인용줄 ssot는 이 변경이 지키게 만드는 ARCH 결정(없으면 `-`), base는 항상 `ARCH@rev`. impl notes 첫 줄은 `- from review/<slug> Fn`. acceptance에 "동작 불변 — 기존 테스트 통과"와 finding이 요구하는 테스트를 넣는다. 기획 결정을 바꾸는 태스크는 만들지 않는다 — 그런 finding은 update-ssot로 넘기고 [?]로 되돌린다.
-- dep 그래프와 순서를 정리한다. dep은 표의 활성 태스크 또는 `tasks/done/`의 완료 태스크를 가리킬 수 있고, 채번은 tasks/done/까지 포함한 최대 번호+1. 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
+- impl notes의 결정 중 **이후 변경이 계속 지켜야 하는 계약**(공개 API 형태, 저장 포맷, 호환성 규칙)은 태스크에만 두지 않는다 — 그건 기획·기준 문서의 몫이니 update-ssot(또는 ARCH 개정)를 제안하고, 태스크에는 이번 구현이 따를 형태만 남긴다.
+- dep 그래프와 순서를 정리한다. dep은 표의 활성 태스크 또는 `tasks/done/`의 완료 태스크를 가리킬 수 있고, 채번은 tasks/done/까지 포함한 최대 번호+1 — 이때 완료 태스크는 **파일명 목록만** 본다(내용 정독은 특정 태스크를 조사할 때뿐, FORMAT Reading). 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
 
 ## 4. 마감
 - 태스크마다 이 스킬 폴더의 assets/task.md를 복사해 `tasks/T###.<slug>.md`로 채운다(`<...>` 전부 교체) → STATE: tasks 행 추가(리뷰 태스크의 ssot 셀은 `ARCH`), next=`implement-task T###`(dep상 첫 것), log 1줄.

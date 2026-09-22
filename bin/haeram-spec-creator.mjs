@@ -10,7 +10,7 @@ const HELP = `haeram-spec-creator
   haeram-spec-creator validate [--allow-empty]
   haeram-spec-creator install [--target <path>] [--agent both|claude|codex] [--dry-run] [--force]
   haeram-spec-creator check [--target <path>] [--agent both|claude|codex]
-  haeram-spec-creator lint [--target <path>]
+  haeram-spec-creator lint [--target <path>] [--hints]
 
 옵션:
   --target <path>  스킬을 설치하거나 검사할 프로젝트 (기본값: 현재 폴더)
@@ -18,9 +18,12 @@ const HELP = `haeram-spec-creator
   --dry-run        파일을 바꾸지 않고 설치 계획만 출력
   --force          충돌한 로컬 파일을 패키지 버전으로 교체
   --allow-empty    validate에서 빈 skills/ 폴더 허용
+  --hints          lint의 검토 후보를 전부 출력 (기본: 앞 10건)
   -h, --help       도움말
   -v, --version    버전
 `
+
+const HINT_PREVIEW = 10
 
 function takeValue(args, index, option) {
   const argument = args[index]
@@ -40,6 +43,7 @@ function parseOptions(args) {
     else if (argument === '--dry-run') options.dryRun = true
     else if (argument === '--force') options.force = true
     else if (argument === '--allow-empty') options.allowEmpty = true
+    else if (argument === '--hints') options.hints = true
     else if (argument === '--target' || argument.startsWith('--target=')) {
       const { value, consumed } = takeValue(args, index, '--target')
       options.targetRoot = value
@@ -124,9 +128,21 @@ async function main() {
   if (command === 'lint') {
     const result = await lintSpec(options)
     for (const warning of result.warnings) process.stdout.write(`경고: ${warning}\n`)
+    // 검토 후보는 구조 위반이 아니라 doc-review가 판단할 의미 품질 신호다 — 종료 코드에 영향을 주지 않는다.
+    const shown = options.hints ? result.reviewHints : result.reviewHints.slice(0, HINT_PREVIEW)
+    for (const hint of shown) process.stdout.write(`검토 후보: ${hint}\n`)
+    if (result.reviewHints.length > shown.length) {
+      process.stdout.write(
+        `검토 후보: … 외 ${result.reviewHints.length - shown.length}건 — 전체는 lint --hints, 정리는 doc-review\n`,
+      )
+    }
     if (!result.ok) throw new SkillPackageError('spec/ 문서가 FORMAT 불변식을 위반합니다.', result.errors)
-    const warningNote = result.warnings.length > 0 ? ` (경고 ${result.warnings.length}건)` : ''
-    process.stdout.write(`spec 정합성 정상: ssot ${result.counts.ssot}개, 남은 task ${result.counts.tasks}개, 완료 ${result.counts.done}개${warningNote}\n`)
+    const notes = [
+      result.warnings.length > 0 ? `경고 ${result.warnings.length}건` : null,
+      result.reviewHints.length > 0 ? `검토 후보 ${result.reviewHints.length}건` : null,
+    ].filter(Boolean)
+    const note = notes.length > 0 ? ` (${notes.join(', ')})` : ''
+    process.stdout.write(`spec 정합성 정상: ssot ${result.counts.ssot}개, 남은 task ${result.counts.tasks}개, 완료 ${result.counts.done}개${note}\n`)
     return
   }
 

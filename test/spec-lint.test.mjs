@@ -291,3 +291,168 @@ test('spec이 없는 프로젝트는 부트스트랩 안내 오류를 낸다', a
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// ---- 문서 품질: 구조는 lint(오류·경고)가, 의미는 doc-review(검토 후보)가 본다 ----
+
+test('구조화된 결정 블록(하위 항목·표)은 오류도 검토 후보도 만들지 않는다', async () => {
+  const structured = ARCH.replace(
+    '- ARCH-1 [o] stack: next 15 ← ecosystem',
+    [
+      '- ARCH-1 [o] stack: next 15 ← ecosystem',
+      '- ARCH-3 [o] target size follows the pointer, not the device class ← a tablet with a mouse is not a phone',
+      '  - fine pointer: 40 px floor',
+      '  - coarse pointer: 44 px floor, never below',
+      '  | surface | replacement |',
+      '  |---|---|',
+      '  | form field | Listbox |',
+    ].join('\n'),
+  )
+  await withFixture({ arch: structured }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.deepEqual(result.reviewHints, [])
+    assert.equal(result.ok, true)
+  })
+})
+
+test('상위 항목 없이 시작하는 하위 줄은 오류다', async () => {
+  const orphan = ARCH.replace('## decisions\n', '## decisions\n  - dangling condition with no decision above it\n')
+  await withFixture({ arch: orphan }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.equal(result.ok, false)
+    assert.ok(result.errors.some((e) => e.includes('상위 항목 없이')))
+  })
+})
+
+test('복합 결정 신호(긴 줄 · 묶음 · 이유 2개)는 검토 후보이고 오류는 아니다', async () => {
+  const fused = ARCH.replace(
+    '- ARCH-1 [o] stack: next 15 ← ecosystem',
+    [
+      `- ARCH-1 [o] stack: next 15 with ${'a policy clause '.repeat(45)}trailing`,
+      '- ARCH-3 [o] buttons: cta · secondary · ghost · danger',
+      '- ARCH-4 [o] cache the manifest ← fewer round trips ← smaller bundle',
+    ].join('\n'),
+  )
+  await withFixture({ arch: fused }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.equal(result.ok, true)
+    assert.ok(result.reviewHints.some((h) => h.includes('ARCH-1') && h.includes('결정 라인이')))
+    assert.ok(result.reviewHints.some((h) => h.includes('ARCH-3') && h.includes("' · ' 묶음이 4개")))
+    assert.ok(result.reviewHints.some((h) => h.includes('ARCH-4') && h.includes('← 이유가 2개')))
+  })
+})
+
+test('줄을 합쳐 경고를 피할 수 없다 — 하위 항목으로 펴야 신호가 사라진다', async () => {
+  const clauses = [
+    'login 5 per minute',
+    'password reset 3 per hour',
+    'over the limit the API answers 429 with retry-after, never a silent drop',
+    'the counter is per account and never per IP',
+  ]
+  const joined = ARCH.replace(
+    '- ARCH-1 [o] stack: next 15 ← ecosystem',
+    `- ARCH-1 [o] rate limits: ${clauses.join('; ')} ${'and the same holds for every write endpoint '.repeat(12)}`,
+  )
+  const split = ARCH.replace(
+    '- ARCH-1 [o] stack: next 15 ← ecosystem',
+    ['- ARCH-1 [o] rate limits per account ← abuse without blocking shared offices', ...clauses.map((c) => `  - ${c}`)].join('\n'),
+  )
+  await withFixture({ arch: joined }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.reviewHints.some((h) => h.includes('결정 라인이')))
+  })
+  await withFixture({ arch: split }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.reviewHints, [])
+    // 조건·수치·부정 표현은 전부 남아 있어야 한다
+    assert.deepEqual(result.errors, [])
+  })
+})
+
+test('과거 경위·ISO 날짜·미사여구는 검토 후보, 백틱 코드 안의 값은 아니다', async () => {
+  const traced = ARCH.replace(
+    '- ARCH-1 [o] stack: next 15 ← ecosystem',
+    [
+      '- ARCH-1 [o] stack: next 15 (owner decision 2026-08-31, as discussed) ← ecosystem',
+      '- ARCH-3 [o] obviously the cache stays in memory',
+      '- ARCH-4 [o] the export filename is `report-2026-08-31.csv` ← the legacy importer matches on it',
+    ].join('\n'),
+  )
+  await withFixture({ arch: traced }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.reviewHints.some((h) => h.includes('ARCH-1') && h.includes('과거 경위')))
+    assert.ok(result.reviewHints.some((h) => h.includes('ARCH-1') && h.includes('2026-08-31')))
+    assert.ok(result.reviewHints.some((h) => h.includes('ARCH-3') && h.includes('군더더기')))
+    assert.equal(result.reviewHints.some((h) => h.includes('ARCH-4')), false)
+  })
+})
+
+test('constraints의 과거 흔적도 검토 후보로 잡는다', async () => {
+  const withConstraint = ARCH.replace(
+    '## chg',
+    '## constraints\n- the editor keeps the old parser as we agreed\n\n## chg',
+  )
+  await withFixture({ arch: withConstraint }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.reviewHints.some((h) => h.includes('constraints') && h.includes('과거 경위')))
+  })
+})
+
+test('chg는 tasked와 활성 태스크 base 아래까지 이어져 있어야 한다', async () => {
+  const noR2 = ARCH.replace('- r2 260905 ARCH-2+\n', '')
+  await withFixture({ arch: noR2 }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.warnings.some((w) => w.includes('chg에 r2 항목이 없습니다')))
+  })
+  // 진행 중 태스크의 base가 낡았으면 그 아래 rev의 chg도 필요하다
+  const rev3 = STATE.replace('| ARCH | 2 | 2 | - | 1 |', '| ARCH | 3 | 3 | - | 1 |')
+  const archR3 = ARCH.replace('> r2 |', '> r3 |').replace('## chg\n', '## chg\n- r3 260906 ARCH-1✎ next 15→16\n')
+  const staleBase = T002.replace('base:ARCH@2', 'base:ARCH@1')
+  await withFixture(
+    { state: rev3, arch: archR3.replace('- r2 260905 ARCH-2+\n', ''), tasks: { 'T002.api.md': staleBase } },
+    async (root) => {
+      const result = await lintSpec({ targetRoot: root })
+      assert.ok(result.warnings.some((w) => w.includes('chg에 r2 항목이 없습니다')))
+    },
+  )
+  await withFixture({ state: rev3, arch: archR3, tasks: { 'T002.api.md': staleBase } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.equal(result.warnings.some((w) => w.includes('chg에 r')), false)
+  })
+})
+
+test('긴 chg 요약은 검토 후보다', async () => {
+  const wordy = ARCH.replace('- r2 260905 ARCH-2+', `- r2 260905 ARCH-2+ ${'narrating why this changed '.repeat(20)}`)
+  await withFixture({ arch: wordy }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.reviewHints.some((h) => h.includes('chg r2') && h.includes('요약이')))
+  })
+})
+
+test('아카이브된 완료 태스크의 빈 result는 경고다', async () => {
+  const emptyResult = T001.replace('- done, files created\n', '')
+  await withFixture({ done: { 'T001.scaffold.md': emptyResult } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.warnings.some((w) => w.includes('T001') && w.includes('## result가 비어 있습니다')))
+  })
+})
+
+test('doc-review식 분할: 새 번호를 붙여도 참조·rev·pending·완료 dep이 그대로다', async () => {
+  // ARCH-1이 두 정책을 품고 있었다 → 머리 정책은 ARCH-1이 유지하고, 떨어진 정책만 새 번호를 받는다.
+  const tidied = ARCH.replace(
+    '- ARCH-1 [o] stack: next 15 ← ecosystem',
+    ['- ARCH-1 [o] stack: next 15 ← ecosystem', '- ARCH-3 [o] package manager: pnpm ← workspace hoisting'].join('\n'),
+  )
+  await withFixture({ arch: tidied }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, []) // T002의 ssot:ARCH-1 ARCH-2 참조가 그대로 유효
+    assert.equal(result.ok, true)
+    assert.equal(result.counts.done, 1) // 완료 태스크 아카이브와 dep 판정은 영향받지 않는다
+    // rev·pending을 건드리지 않았으므로 tasked=rev·pending='-' 경고가 새로 생기지 않는다
+    assert.equal(result.warnings.some((w) => w.includes('pending')), false)
+    assert.equal(result.warnings.some((w) => w.includes('chg')), false)
+  })
+})

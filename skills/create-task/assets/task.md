@@ -12,3 +12,7 @@
 - <schema/contract/library decided at create-task, with reason>
 
 ## result
+- outcome: <what works now>
+- at: <git sha7 the checks ran on, or ->
+- verified: <the checks that actually ran>
+- limits: <what is still open, or ->

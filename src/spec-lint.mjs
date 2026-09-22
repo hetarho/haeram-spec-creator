@@ -9,6 +9,88 @@ const FINDING_LINE = /^-\s+F(\d+)\s+\[(o|x|\?)\]\s+P[123]\s+\S/
 const LEVELS = new Set(['expert', 'mid', 'novice', '?'])
 const SSOT_SECTIONS = ['decisions', 'flow', 'constraints', 'chg']
 const SSOT_REQUIRED = ['decisions', 'chg']
+const TOP_BULLET = /^-\s+\S/
+const SUB_LINE = /^\s+-\s+\S/
+const TABLE_ROW = /^\s*\|/
+
+// 의미 품질 신호(검토 후보). 구조 위반이 아니라 doc-review가 판단할 거리다 — 임계값은 신호일 뿐
+// 자동 교정 기준이 아니고, 줄을 합치면 오히려 더 걸리도록 '한 줄' 길이만 센다.
+const DECISION_LINE_MAX = 700
+const DOT_GROUP_MAX = 2 // ' · ' 묶음이 3개 이상이면 여러 정책이 붙은 신호
+const REASON_MAX = 1 // ' ← ' 가 2개면 결정도 2개
+const CHG_LINE_MAX = 400
+const TRACE_PATTERNS = [
+  /\bas\s+(?:the\s+user\s+|you\s+|we\s+)?(?:asked|requested|discussed|agreed)\b/i,
+  /\bwe\s+(?:decided|agreed|chose)\b/i,
+  /\bowner\s+(?:decision|decided|kept|chose|picked|approved)\b/i,
+  /\bper\s+(?:the\s+)?(?:owner|user)(?:'s)?\s+(?:request|decision)\b/i,
+  /\bfor\s+historical\s+reasons\b/i,
+]
+const FILLER_PATTERNS = [
+  /\bobviously\b/i,
+  /\bof\s+course\b/i,
+  /\bneedless\s+to\s+say\b/i,
+  /\bit\s+is\s+worth\s+noting\b/i,
+  /\bnote\s+that\b/i,
+  /\bas\s+we\s+all\s+know\b/i,
+  /\bsimply\s+put\b/i,
+  /\bin\s+other\s+words\b/i,
+  /\bbasically\b/i,
+]
+const ISO_DATE = /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/
+
+function withoutCode(text) {
+  return text.replace(/`[^`]*`/g, ' ')
+}
+
+function countOccurrences(text, needle) {
+  return text.split(needle).length - 1
+}
+
+// 결정 라인 하나(또는 flow·constraints 한 줄)에서 찾을 수 있는 의미 신호를 모은다.
+function proseHints(line) {
+  const hints = []
+  const text = withoutCode(line)
+  for (const pattern of TRACE_PATTERNS) {
+    const found = text.match(pattern)
+    if (found) {
+      hints.push(`과거 경위 표현: "${found[0].trim()}" — 현재 동작과 무관하면 지웁니다`)
+      break
+    }
+  }
+  const date = text.match(ISO_DATE)
+  if (date) {
+    hints.push(`날짜 ${date[0]} — FORMAT 날짜는 YYMMDD이고, 결정 안의 날짜는 측정 출처(measured YYMMDD)만 남깁니다`)
+  }
+  for (const pattern of FILLER_PATTERNS) {
+    const found = text.match(pattern)
+    if (found) {
+      hints.push(`군더더기 표현: "${found[0].trim()}"`)
+      break
+    }
+  }
+  return hints
+}
+
+// 결정 '한 줄'의 구조 신호. 하위 항목으로 펴면 사라지고, 줄을 합치면 더 강해진다.
+function decisionShapeHints(headLine) {
+  const hints = []
+  const text = headLine.trimEnd()
+  if (text.length > DECISION_LINE_MAX) {
+    hints.push(
+      `결정 라인이 ${text.length}자입니다 — 조건·예외를 하위 항목이나 표로 펴거나, 따로 바뀌는 정책이면 나눕니다`,
+    )
+  }
+  const dots = countOccurrences(text, ' · ')
+  if (dots > DOT_GROUP_MAX) {
+    hints.push(`한 줄에 ' · ' 묶음이 ${dots + 1}개입니다 — 독립적으로 바뀌는 정책이 섞였는지 봅니다`)
+  }
+  const reasons = countOccurrences(text, ' ← ')
+  if (reasons > REASON_MAX) {
+    hints.push(`한 줄에 ← 이유가 ${reasons}개입니다 — 이유가 둘이면 결정도 둘입니다`)
+  }
+  return hints
+}
 
 async function readIfExists(filePath) {
   try {
@@ -90,12 +172,13 @@ export async function lintSpec({ targetRoot } = {}) {
   const specRoot = path.join(path.resolve(targetRoot ?? process.cwd()), 'spec')
   const errors = []
   const warnings = []
+  const reviewHints = []
   const counts = { ssot: 0, tasks: 0, done: 0 }
 
   const state = await readIfExists(path.join(specRoot, 'STATE.md'))
   if (state === null) {
     errors.push('spec/STATE.md가 없습니다 — create-architecture로 부트스트랩하세요.')
-    return { ok: false, errors, warnings, counts }
+    return { ok: false, errors, warnings, reviewHints, counts }
   }
   if ((await readIfExists(path.join(specRoot, 'FORMAT.md'))) === null) {
     errors.push('spec/FORMAT.md가 없습니다.')
@@ -146,7 +229,7 @@ export async function lintSpec({ targetRoot } = {}) {
       errors.push(`ssot/${id}.md의 rev(r${revMatch[1]})와 STATE rev(${rev})가 다릅니다.`)
     }
 
-    // skeleton: fixed sections only, in order, bullets only (FORMAT principle 6)
+    // skeleton: fixed sections only, in order. 결정은 '결정 블록'(머리줄 + 들여쓴 하위 줄·표)이다.
     const ssotSections = sections(content)
     for (const name of SSOT_REQUIRED) {
       if (!ssotSections.has(name)) errors.push(`ssot/${id}.md에 ## ${name} 섹션이 없습니다.`)
@@ -160,19 +243,46 @@ export async function lintSpec({ targetRoot } = {}) {
       }
       if (index < lastIndex) warnings.push(`ssot/${id}.md 섹션 순서가 골격과 다릅니다: ## ${name}`)
       lastIndex = index
+      let sawTopBullet = false
       for (const line of lines) {
         const trimmed = line.trim()
-        if (trimmed === '' || trimmed.startsWith('- ')) continue
+        if (trimmed === '') continue
+        if (TOP_BULLET.test(line)) {
+          sawTopBullet = true
+          continue
+        }
+        if (name === 'chg') {
+          warnings.push(`ssot/${id}.md chg에 불릿이 아닌 줄이 있습니다: "${trimmed.slice(0, 60)}"`)
+          continue
+        }
+        if (SUB_LINE.test(line) || TABLE_ROW.test(line)) {
+          if (!sawTopBullet) {
+            errors.push(
+              `ssot/${id}.md ${name}: 상위 항목 없이 시작하는 하위 줄이 있습니다: "${trimmed.slice(0, 60)}"`,
+            )
+          }
+          continue
+        }
         warnings.push(`ssot/${id}.md ${name}에 불릿이 아닌 산문 줄이 있습니다: "${trimmed.slice(0, 60)}"`)
       }
     }
 
+    // 결정 블록으로 묶기: 들여쓴 하위 줄·표는 바로 위 결정의 일부다(고유 번호를 갖지 않는다).
+    const blocks = []
+    for (const line of ssotSections.get('decisions') ?? []) {
+      if (line.trim() === '') continue
+      if (TOP_BULLET.test(line)) {
+        blocks.push({ head: line.trimEnd(), subs: [] })
+        continue
+      }
+      if (blocks.length > 0) blocks.at(-1).subs.push(line.trimEnd())
+    }
+
     const decisions = new Set()
     let openCount = 0
-    const decisionLines = (ssotSections.get('decisions') ?? []).filter((line) => line.trim().startsWith('- '))
-    if (decisionLines.length === 0) warnings.push(`ssot/${id}.md의 decisions 섹션이 비어 있습니다.`)
-    for (const line of decisionLines) {
-      const trimmed = line.trim()
+    if (blocks.length === 0) warnings.push(`ssot/${id}.md의 decisions 섹션이 비어 있습니다.`)
+    for (const block of blocks) {
+      const trimmed = block.head.trim()
       const decision = trimmed.match(/^-\s+([A-Z]{2,6})-(\d+)\s+\[(o|x|\?)\]\s+\S/)
       if (!decision) {
         errors.push(`ssot/${id}.md 결정 라인 형식 오류: "${trimmed.slice(0, 60)}"`)
@@ -183,21 +293,41 @@ export async function lintSpec({ targetRoot } = {}) {
       if (decisions.has(number)) errors.push(`ssot/${id}.md 결정 번호 중복: ${id}-${number}`)
       decisions.add(number)
       if (decision[3] === '?') openCount += 1
+
+      const label = `ssot/${id}.md ${decision[1]}-${decision[2]}`
+      for (const hint of decisionShapeHints(block.head)) reviewHints.push(`${label}: ${hint}`)
+      for (const hint of proseHints(block.head)) reviewHints.push(`${label}: ${hint}`)
+      for (const sub of block.subs) {
+        for (const hint of proseHints(sub)) reviewHints.push(`${label}: ${hint}`)
+      }
+    }
+    for (const name of ['flow', 'constraints']) {
+      for (const line of ssotSections.get(name) ?? []) {
+        if (line.trim() === '') continue
+        for (const hint of proseHints(line)) reviewHints.push(`ssot/${id}.md ${name}: ${hint}`)
+      }
     }
     if (row.length >= 5 && openText !== '' && Number(openText) !== openCount) {
       warnings.push(`${id}: STATE [?] 열(${openText})과 실제 미정 결정 수(${openCount})가 다릅니다.`)
     }
-    if (Number.isInteger(rev) && !new RegExp(`^\\s*-\\s+r${rev}\\b`, 'm').test(content)) {
-      warnings.push(`ssot/${id}.md chg에 현재 rev(r${rev}) 항목이 없습니다.`)
-    }
+
+    const chgRevs = new Set()
     for (const chgLine of ssotSections.get('chg') ?? []) {
       const trimmed = chgLine.trim()
       if (!trimmed.startsWith('- r')) continue
+      const covered = trimmed.match(/^-\s+r(\d+)\b/)
+      if (covered) chgRevs.add(Number(covered[1]))
       if (/[A-Z]{2,6}-\d+✎/.test(trimmed) && !trimmed.includes('→')) {
         warnings.push(`ssot/${id}.md chg: ✎ 항목에 이전 값(old→new)이 없습니다: "${trimmed.slice(0, 60)}"`)
       }
+      if (trimmed.length > CHG_LINE_MAX) {
+        const where = covered ? `chg r${covered[1]}` : 'chg'
+        reviewHints.push(
+          `ssot/${id}.md ${where}: 요약이 ${trimmed.length}자입니다 — 결정 표기와 old→new만 남깁니다`,
+        )
+      }
     }
-    ssotInfo.set(id, { rev, decisions })
+    ssotInfo.set(id, { rev, tasked, chgRevs, decisions })
   }
   for (const file of (await listIfExists(path.join(specRoot, 'ssot'))).filter((f) => f.endsWith('.md'))) {
     const id = file.replace(/\.md$/, '')
@@ -208,6 +338,7 @@ export async function lintSpec({ targetRoot } = {}) {
   // tasks
   const taskRows = tableRows(stateSections.get('tasks'))
   const taskIds = new Set(taskRows.map((row) => row[0]))
+  const activeBaseByDomain = new Map()
   const fileByTaskId = new Map()
   for (const file of (await listIfExists(path.join(specRoot, 'tasks'))).filter((f) => f.endsWith('.md'))) {
     const named = file.match(/^(T\d{3,})\./)
@@ -233,6 +364,11 @@ export async function lintSpec({ targetRoot } = {}) {
     const archivedSt = quoteFields(quoteLine(content ?? '') ?? '').get('st')
     if (!archivedSt?.startsWith('done@')) {
       errors.push(`tasks/done/${file}: 아카이브된 태스크의 st가 done@가 아닙니다: ${archivedSt ?? '(없음)'}`)
+    }
+    // 아카이브는 '그때 무엇을 어떻게 검증했나'를 남기는 역사 기록이다 — 비어 있으면 그 기록이 없다.
+    const archivedResult = (sections(content ?? '').get('result') ?? []).filter((line) => line.trim() !== '')
+    if (archivedResult.length === 0) {
+      warnings.push(`tasks/done/${file}: ## result가 비어 있습니다 — outcome·at·verified·limits를 남기세요.`)
     }
   }
   for (const row of taskRows) {
@@ -291,6 +427,10 @@ export async function lintSpec({ targetRoot } = {}) {
         continue
       }
       const baseRev = Number(parsed[2])
+      const lowest = activeBaseByDomain.get(parsed[1])
+      if (Number.isInteger(baseRev) && (lowest === undefined || baseRev < lowest)) {
+        activeBaseByDomain.set(parsed[1], baseRev)
+      }
       if (baseRev > info.rev) errors.push(`tasks/${file}: base ${base}가 현재 rev(r${info.rev})보다 큽니다.`)
       else if (baseRev < info.rev && !(st ?? '').startsWith('done')) {
         warnings.push(`${id}: base ${base} < 현재 r${info.rev} — implement 전 신선도 확인 필요.`)
@@ -302,6 +442,21 @@ export async function lintSpec({ targetRoot } = {}) {
   }
   counts.tasks = taskIds.size
   counts.done = doneIds.size
+
+  // chg는 미소화 델타(tasked+1..rev)와 활성 태스크의 신선도 확인(base+1..rev)이 읽는다.
+  // 그 구간의 줄은 지워지면 안 되므로 빠진 rev를 경고한다.
+  for (const [id, info] of ssotInfo) {
+    if (!Number.isInteger(info.rev)) continue
+    const consumed = Number.isInteger(info.tasked) ? info.tasked : 0
+    const floor = Math.min(consumed, activeBaseByDomain.get(id) ?? consumed, info.rev)
+    for (let revision = Math.max(1, Math.min(floor + 1, info.rev)); revision <= info.rev; revision += 1) {
+      if (!info.chgRevs.has(revision)) {
+        warnings.push(
+          `ssot/${id}.md chg에 r${revision} 항목이 없습니다 — 미소화 델타와 진행 중 태스크의 신선도 확인에 필요합니다.`,
+        )
+      }
+    }
+  }
 
   // ideation (optional)
   const ideationRows = stateSections.has('ideation') ? tableRows(stateSections.get('ideation')) : []
@@ -383,5 +538,5 @@ export async function lintSpec({ targetRoot } = {}) {
   const nextLines = (stateSections.get('next') ?? []).filter((line) => line.trim().startsWith('- '))
   if (stateSections.has('next') && nextLines.length === 0) warnings.push('STATE next가 비어 있습니다 — 다음 할 일을 남기세요.')
 
-  return { ok: errors.length === 0, errors, warnings, counts }
+  return { ok: errors.length === 0, errors, warnings, reviewHints, counts }
 }

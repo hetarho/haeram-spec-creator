@@ -19,6 +19,7 @@ description: >-
 2. **문서 먼저**: 질문·추론을 시작하기 전에 STATE.md에 시작을 기록하고, 상태가 바뀔 때마다 즉시 반영한다. 병렬 세션은 STATE.md로만 서로를 안다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다(영어). 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
+5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
 ## 1. 시작
 - STATE 읽기 → log `- YYMMDD ideation <slug> start`. STATE에 `## ideation` 섹션(`| id | st |`)이 없으면 cfg 다음에 추가한다.

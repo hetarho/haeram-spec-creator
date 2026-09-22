@@ -5,15 +5,16 @@
 Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제약, 결정 사항, 완료 조건을 먼저 명확히 하고 각 단계의 결과를 다음 단계의 입력으로 이어 가도록 돕습니다. 이 저장소의 핵심은 라이브러리 API가 아니라 AI 에이전트가 필요할 때 불러 쓰는 스킬이며, npm 패키지는 여러 프로젝트에 그 스킬을 안전하게 설치하고 동기화하기 위한 배포 수단입니다.
 
 > [!TIP]
-> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 8종: `ideation` · `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `create-narrative`.
+> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 9종: `ideation` · `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `doc-review` · `create-narrative`.
 
 ## 핵심 개념
 
-이 스킬셋은 세 가지 원칙 위에 설계되어 있습니다.
+이 스킬셋은 네 가지 원칙 위에 설계되어 있습니다.
 
-1. **역할 분리** — SSOT(기획)는 **기획자** 역할의 에이전트가 기획 관점 질문(목적·타겟·범위·플로우·정책)으로 만들고, 태스크(구현 계획)는 **엔지니어** 역할의 에이전트가 개발 관점 질문(데이터 모델·API·엣지·마이그레이션)으로 만듭니다. 기획 문서에 기술 결정이, 구현 단계에 기획 재논의가 섞이지 않습니다. 기획 쪽에 변경을 제안하는 `ideation`이 있듯, 개발 쪽에는 코드 품질을 대변해 리팩토링을 주장하는 **리뷰어**(`review-code`)가 있습니다 — 채택은 언제나 사용자가 합니다.
+1. **역할 분리** — SSOT(기획)는 **기획자** 역할의 에이전트가 기획 관점 질문(목적·타겟·범위·플로우·정책)으로 만들고, 태스크(구현 계획)는 **엔지니어** 역할의 에이전트가 개발 관점 질문(데이터 모델·API·엣지·마이그레이션)으로 만듭니다. 기획 문서에 기술 결정이, 구현 단계에 기획 재논의가 섞이지 않습니다. 기획 쪽에 변경을 제안하는 `ideation`이 있듯, 개발 쪽에는 코드 품질을 대변해 리팩토링을 주장하는 **리뷰어**(`review-code`)가, 문서 쪽에는 의미를 보존하며 문장을 다듬는 **편집자**(`doc-review`)가 있습니다 — 채택은 언제나 사용자가 합니다.
 2. **사용자 수준 적응** — 최초 1회 캘리브레이션으로 `expert / mid / novice`를 정하면 모든 질문과 보고가 그 수준에 맞춰집니다. expert에게는 선택지를 용어로만 나열하고 세부·엣지까지 직접 묻고, mid에게는 선택지에 장단점을 한 줄씩 붙이고, novice에게는 기술명 대신 "무엇이 어떻게 되는지"를 물은 뒤 기술 결정은 에이전트가 내리고 한 줄로 보고합니다.
 3. **문서 먼저** — 모든 스킬은 질문·추론·구현을 시작하기 전에 관제탑 문서(`spec/STATE.md`)에 시작을 기록하고, 상태가 바뀌는 즉시 반영합니다. 병렬 세션들은 이 파일 하나로 서로의 상황을 파악하므로 어떤 세션에서든 "다음 태스크 구현해줘", "SSOT 변경분 태스크로 쪼개줘"가 바로 통합니다.
+4. **정책 단위 문서** — SSOT의 한 결정은 **독립적으로 이해하고 검증할 수 있는 정책 하나**입니다. 조건이 많으면 줄을 합치지 않고 하위 항목이나 표로 폅니다(줄바꿈을 없애는 것은 간결화가 아닙니다). 대신 누가 언제 요청했는지, 과거 논의와 폐기된 방식의 상세, 미사여구는 남기지 않습니다 — 호환성·실패 조건·보안·과금·수치와 단위·부정 표현·필요한 근거는 반대로 반드시 남깁니다. 구조는 `lint`가 강제하고, 의미 품질은 `lint`가 **검토 후보**로만 표시한 뒤 `doc-review`가 사람과 함께 판단합니다.
 
 ## 개발 흐름
 
@@ -26,6 +27,7 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 | 2 | `create-task` | 엔지니어 | SSOT 변경분(pending)과 채택된 리뷰 finding을 개발 인터뷰와 함께 태스크로 분해 | `spec/tasks/T###.md` |
 | 3 | `implement-task` | 엔지니어 | 태스크 선점(doing) → 구현 → 검증(test·lint·format·CI/CD) → done | 코드 + 갱신된 태스크/STATE |
 | 수시 | `review-code` | 리뷰어 | 코드를 ARCH 컨벤션·개발 관점에서 점검해 우선순위 붙은 리팩토링 finding을 제안, 사용자가 채택 | `spec/review/<slug>.md` |
+| 수시 | `doc-review` | 편집자 | 기존 SSOT를 의미 보존 원칙 아래 정리 — 복합 결정 분해, 과거 흔적·중복 제거. 정책이 바뀌어야 하는 문제는 `update-ssot`로 넘김 | 다듬어진 `spec/ssot/*.md` (rev 불변) |
 | 필요시 | `create-narrative` | 작가 | spec 전체를 사람이 읽기 좋은 한국어 이야기로 엮음 | `spec/NARRATIVE.md` |
 
 설치된 프로젝트에는 다음 구조가 생깁니다.
@@ -40,6 +42,8 @@ spec/
 └── tasks/        # 남은 태스크(todo·doing·blocked)만 — 완료기준·구현메모·결과, base 스탬프로 신선도 검증
     └── done/     # 완료된 태스크 아카이브 — STATE 표는 항상 남은 일만 보여줍니다
 ```
+
+`tasks/done/`은 **당시의 의도와 실제 구현·검증을 비교할 수 있는 역사 기록**입니다. 평가와 회귀 조사를 위해 보존하지만, 현재 규칙의 근거는 아닙니다(`st`·`base`는 완료 시점의 값입니다). 그래서 일반 구현 작업은 완료 태스크를 기본 입력으로 읽지 않고, 특정 태스크·회귀 원인·이전 검증 방법을 조사할 때만 해당 파일을 골라 엽니다. 지금도 지켜야 하는 계약이 완료 태스크에만 남아 있다면 그건 SSOT로 올라가야 할 신호입니다.
 
 SSOT의 `rev`(현재 개정)와 STATE의 `tasked`(태스크로 소화된 개정)의 차이가 곧 "아직 구현 계획에 반영되지 않은 기획 변경"입니다. 그래서 어느 세션에서든 "SSOT 변경사항 태스크로 쪼개줘"라고만 해도 에이전트가 무엇이 어떻게 바뀌었는지 스스로 찾아냅니다.
 
@@ -95,6 +99,10 @@ SSOT 변경사항 태스크로 쪼개줘.                        → create-task
 
 ```text
 리팩토링할 데 있는지 코드 점검해줘.                   → review-code
+```
+
+```text
+THEME SSOT가 너무 길어. 의미 바꾸지 말고 정리해줘.      → doc-review
 ```
 
 ## 직접 설치하기
@@ -154,9 +162,12 @@ npx haeram-spec-creator install --dry-run
 # 설치본이 현재 패키지와 같은지 확인
 npx haeram-spec-creator check
 
-# spec/ 문서가 FORMAT 불변식을 지키는지 검사 (ID·상태 형식, rev/tasked 정합, 참조 무결성, SSOT 골격 밖 섹션·산문)
+# spec/ 문서가 FORMAT 불변식을 지키는지 검사 (ID·상태 형식, rev/tasked 정합, 참조 무결성, chg 연속성, SSOT 골격 밖 섹션·산문)
 npx haeram-spec-creator lint
 npx haeram-spec-creator lint --target ../my-project
+
+# 의미 품질 신호(검토 후보)까지 전부 보기 — 기본은 앞 10건만 출력하고 종료 코드에는 영향이 없습니다
+npx haeram-spec-creator lint --hints
 
 # 충돌한 로컬 파일을 패키지 버전으로 명시적으로 교체
 npx haeram-spec-creator install --force

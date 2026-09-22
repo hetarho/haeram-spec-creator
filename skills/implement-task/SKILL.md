@@ -16,6 +16,7 @@ description: >-
 2. **문서 먼저**: 질문·추론·구현을 시작하기 전에 STATE.md에 시작을 기록하고(log 1줄 + 해당 st), 상태가 바뀔 때마다 즉시 반영한다. 병렬 세션은 STATE.md로만 서로를 안다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
+5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
 ## 1. 선택 + 선점 (다른 무엇보다 먼저)
 - 인자 T###이 없으면 STATE tasks에서 dep이 전부 충족된 첫 todo를 고른다(dep 충족 = 그 ID가 표에 없고 `tasks/done/`에 파일이 있음). doing인 태스크는 다른 세션 소유 — 절대 잡지 않는다. 회수는 사용자가 명시적으로 지시할 때만(todo 복귀 후 진행).
@@ -28,15 +29,16 @@ description: >-
 - 영향 있음 → 선점 해제(todo 복귀) + log, create-task로 태스크를 갱신하라고 안내하고 중단.
 
 ## 3. 구현
-- 정독: 태스크 전체 + ssot가 가리키는 결정 원문 + ARCH 컨벤션. impl notes가 `review/<slug> Fn`을 가리키면 그 finding 원문도 읽는다.
+- 정독: 태스크 전체 + ssot가 가리키는 결정 원문 + ARCH 컨벤션. impl notes가 `review/<slug> Fn`을 가리키면 그 finding 원문도 읽는다. 현재 규칙의 출처는 ssot/뿐이다 — 완료 태스크는 당시 기록이라 근거로 쓰지 않고, 회귀 원인·이전 검증 방법을 확인해야 할 때만 `tasks/done/`에서 해당 파일을 골라 연다.
 - 완료기준을 위에서부터 구현. 범위 밖 발견(버그·개선거리)은 손대지 말고 log에 1줄(쌓이면 next에 `review-code` 제안).
 - 태스크는 질문 없이 완주 가능해야 정상이다. 구현 중 결정이 필요한 질문이 생기면 분해 실패 신호 — 임의로 정하지 말고, 기획 공백·모순이면 update-ssot 제안, 기술 결정 누락이면 blocked 후 create-task 재분해 제안.
 
 ## 4. 검증 (항상 이 순서로 마친다)
-① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx -y haeram-spec-creator lint`로 spec 정합성을 검사하고 위반은 고친다(네트워크·CLI가 없으면 생략). ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다. 마지막으로 done 직전 신선도 재확인(2단계와 동일) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
+① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx -y haeram-spec-creator lint`로 spec 정합성을 검사하고 오류·경고는 고친다(네트워크·CLI가 없으면 생략) — 출력의 `검토 후보`는 구조 위반이 아니라 문서 품질 신호라 여기서 고치지 않고, 쌓이면 next에 `doc-review <ID>`를 남긴다. ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다. 마지막으로 done 직전 신선도 재확인(2단계와 동일) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
 
 ## 5. 마감
-- 태스크 `## result`: 변경 파일, 특이사항, SSOT와 달라진 점(있으면 update-ssot 제안까지).
+- 태스크 `## result`(FORMAT 골격, 4줄): `- outcome:` 무엇이 되게 됐는지 / `- at:` 검증을 돌린 커밋 sha7(git이 없으면 `-`) / `- verified:` 실제로 통과시킨 검사 / `- limits:` 남은 한계·후속(없으면 `-`). 대화 경위와 구현 과정 서술은 넣지 않는다.
+- 구현 중 정해진 것 중 **이후 변경이 계속 지켜야 하는 계약**은 result에 적어 끝내지 않는다 — 완료 태스크는 아카이브라 아무도 현재 규칙으로 읽지 않는다. update-ssot를 제안해 SSOT로 올린다.
 - 태스크 파일: st→`done@YYMMDD` 갱신 후 `spec/tasks/done/`으로 이동(아카이브).
 - STATE: 해당 행 삭제 — tasks 표는 남은 일만 남긴다. next 갱신(다음 todo), log `- YYMMDD T### done` 1줄.
 - 보고는 cfg.level대로 — novice: 무엇이 가능해졌고 어떻게 확인하는지 / expert: 변경 요약과 리뷰 포인트. 커밋은 요청받았을 때만.
