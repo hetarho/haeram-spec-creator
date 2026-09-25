@@ -172,6 +172,38 @@ test('표에도 아카이브에도 없는 dep 참조는 오류다', async () => 
   })
 })
 
+test('태스크 파일에만 있는 누락 dep도 검사하고 STATE와 불일치를 경고한다', async () => {
+  await withFixture({ tasks: { 'T002.api.md': T002.replace('dep:T001', 'dep:T099') } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((error) => error.includes('dep T099')))
+    assert.ok(result.warnings.some((warning) => warning.includes('파일 dep과 STATE dep')))
+  })
+})
+
+test('dep의 자기참조와 두 태스크 순환은 오류다', async () => {
+  await withFixture({ tasks: { 'T002.api.md': T002.replace('dep:T001', 'dep:T002') } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((error) => error.includes('T002 → T002')))
+  })
+  const state = STATE.replace('| T002 | api | ARCH | T001 | todo |', '| T002 | api | ARCH | T003 | todo |\n| T003 | next | ARCH | T002 | todo |')
+  const tasks = {
+    'T002.api.md': T002.replace('dep:T001', 'dep:T003'),
+    'T003.next.md': T002.replace('# T002 api', '# T003 next').replace('dep:T001', 'dep:T002'),
+  }
+  await withFixture({ state, tasks }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((error) => error.includes('T002 → T003 → T002')))
+  })
+})
+
+test('STATE에만 있는 순환도 감지한다', async () => {
+  const state = STATE.replace('| T002 | api | ARCH | T001 | todo |', '| T002 | api | ARCH | T002 | todo |')
+  await withFixture({ state }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((error) => error.includes('T002 → T002')))
+  })
+})
+
 test('done 행이 표에 남아 있으면 경고, 아카이브와 동시 존재는 오류다', async () => {
   const withDoneRow = STATE.replace(
     '| T002 | api | ARCH | T001 | todo |',

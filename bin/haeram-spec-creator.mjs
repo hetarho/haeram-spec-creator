@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
-import { checkSkills, discoverSkills, installSkills, lintSpec, SkillPackageError } from '../src/index.mjs'
+import { checkSkills, discoverSkills, installSkills, lintSpec, inspectWorkspace, readTaskBoard, SkillPackageError } from '../src/index.mjs'
 import { getPackageInfo } from '../src/package-info.mjs'
+import { runWorkCLI } from '../src/work-cli.mjs'
+import { inspectWork } from '../src/work-groups.mjs'
 
 const HELP = `haeram-spec-creator
 
@@ -11,14 +13,19 @@ const HELP = `haeram-spec-creator
   haeram-spec-creator install [--target <path>] [--agent both|claude|codex] [--dry-run] [--force]
   haeram-spec-creator check [--target <path>] [--agent both|claude|codex]
   haeram-spec-creator lint [--target <path>] [--hints]
+  haeram-spec-creator context [--target <path>] [--json]
+  haeram-spec-creator board [--target <path>] [--json]
+  haeram-spec-creator work <start|claim|status|board|update|submit|integrate|release|cleanup|recover|unlock> ...
+  haeram-spec-creator work --help
 
 옵션:
-  --target <path>  스킬을 설치하거나 검사할 프로젝트 (기본값: 현재 폴더)
+  --target <path>  설치·검사·조회할 프로젝트 (기본값: 현재 폴더)
   --agent <name>   claude, codex 또는 both (기본값: both)
   --dry-run        파일을 바꾸지 않고 설치 계획만 출력
   --force          충돌한 로컬 파일을 패키지 버전으로 교체
   --allow-empty    validate에서 빈 skills/ 폴더 허용
   --hints          lint의 검토 후보를 전부 출력 (기본: 앞 10건)
+  --json           context/board의 기계 판독용 JSON 출력
   -h, --help       도움말
   -v, --version    버전
 `
@@ -44,6 +51,7 @@ function parseOptions(args) {
     else if (argument === '--force') options.force = true
     else if (argument === '--allow-empty') options.allowEmpty = true
     else if (argument === '--hints') options.hints = true
+    else if (argument === '--json') options.json = true
     else if (argument === '--target' || argument.startsWith('--target=')) {
       const { value, consumed } = takeValue(args, index, '--target')
       options.targetRoot = value
@@ -76,6 +84,7 @@ function printCounts(result) {
 async function main() {
   const rawArgs = process.argv.slice(2)
   const command = rawArgs[0] && !rawArgs[0].startsWith('-') ? rawArgs.shift() : undefined
+  if (command === 'work') return runWorkCLI(rawArgs)
   const options = parseOptions(rawArgs)
 
   if (options.version || command === 'version') {
@@ -85,6 +94,45 @@ async function main() {
   }
   if (options.help || !command || command === 'help') {
     process.stdout.write(HELP)
+    return
+  }
+  if (options.json && !['context', 'board'].includes(command)) {
+    throw new SkillPackageError('--json은 context/board에서만 지원합니다.')
+  }
+
+  if (command === 'context') {
+    const result = await inspectWorkspace(options)
+    result.work = await inspectWork(options)
+    if (options.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+    else {
+      process.stdout.write(`대상: ${result.targetRoot}\n`)
+      if (result.git) {
+        const git = result.git
+        process.stdout.write(`Checkout: ${git.root}\nBranch: ${git.branch ?? '(detached)'}\nHEAD: ${git.head ?? '(첫 커밋 전)'}\n`)
+        process.stdout.write(`Git common dir: ${git.commonDir}\nLinked worktree: ${git.isLinkedWorktree}\n`)
+        for (const tree of git.worktrees) process.stdout.write(`  ${JSON.stringify(tree.path)} (${tree.branch ?? (tree.bare ? 'bare' : 'detached')})\n`)
+      }
+      for (const warning of result.warnings) process.stdout.write(`안내: ${warning}\n`)
+      process.stdout.write(`작업 모드: ${result.work.mode}\n`)
+    }
+    return
+  }
+
+  if (command === 'board') {
+    const result = await readTaskBoard(options)
+    if (options.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+    else {
+      process.stdout.write(`태스크 보드 (현재 checkout): ${result.root}\n`)
+      process.stdout.write('파일 기준 조회입니다. dep 충족은 선점 권한·SSOT 신선도·다른 브랜치의 통합 완료를 보장하지 않습니다.\n')
+      for (const task of result.tasks) {
+        const dep = task.dependencyReady ? 'dep 충족' : task.waitingOn.length ? `dep 대기: ${task.waitingOn.join(', ')}` : '-'
+        process.stdout.write(`${task.id}\t${task.st ?? '?'}\t${dep}\t${task.title}\n`)
+      }
+      process.stdout.write(`남은 task ${result.tasks.length}개, 완료 파일 ID ${result.doneIds.length}개\n`)
+      for (const warning of result.warnings) process.stdout.write(`경고: ${warning}\n`)
+      for (const error of result.errors) process.stderr.write(`오류: ${error}\n`)
+    }
+    if (!result.ok) process.exitCode = 1
     return
   }
 
@@ -158,4 +206,3 @@ main().catch((error) => {
   }
   process.exitCode = 1
 })
-

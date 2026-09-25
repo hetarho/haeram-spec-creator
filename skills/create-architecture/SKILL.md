@@ -13,7 +13,7 @@ description: >-
 
 ## 공통 규칙 (모든 spec 스킬)
 1. 먼저 spec/STATE.md를 읽는다. (이 스킬만 예외: 없으면 0단계 부트스트랩.)
-2. **문서 먼저**: 질문·추론·구현을 시작하기 전에 STATE.md에 시작을 기록하고(log 1줄 + 해당 st), 상태가 바뀔 때마다 즉시 반영한다. 병렬 세션은 STATE.md로만 서로를 안다.
+2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
@@ -27,6 +27,10 @@ description: >-
    cfg의 `?`를 답으로 교체(level = 답, lang = 대화 언어).
 
 spec/이 이미 있으면 0단계 생략, ARCH 개정 모드 — 진행과 마감 모두 update-ssot와 동일 규칙(rev+1·chg·STATE pending·[?] 갱신).
+
+작업 묶음의 워커에서 호출됐다면 이 스킬의 문서 쓰기 절차는 기획 공간으로 인계한다. `manage-work`가 반환한 group.path가 기획·채번·문서 정리 위치이며, 워커 checkout의 STATE·SSOT를 변경하지 않는다.
+
+작업 묶음의 ARCH 개정은 공유 보드의 활성 attempt에도 영향을 줄 수 있다. 영향을 보고하고, 변경 후 워커의 동기화·재검증을 요구한다.
 
 ## 1. 컨텍스트
 - ssot/에 기획 SSOT가 있으면 읽는다. 없으면 "무엇을 만드는지 한 줄"만 묻는다 — 상세 기획은 create-ssot로 미룬다.

@@ -15,10 +15,14 @@ description: >-
 
 ## 공통 규칙 (모든 spec 스킬)
 1. 먼저 spec/STATE.md를 읽는다. 없으면 중단하고 create-architecture 실행을 안내한다.
-2. **문서 먼저**: 질문·추론·구현을 시작하기 전에 STATE.md에 시작을 기록하고(log 1줄 + 해당 st), 상태가 바뀔 때마다 즉시 반영한다. 병렬 세션은 STATE.md로만 서로를 안다.
+2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다 — 단 이 스킬의 산출물 NARRATIVE.md만 예외(FORMAT의 Language 규칙 참조): 사람용 산문이며 사용자 언어(현재 한국어)로 쓴다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
+
+작업 묶음의 워커에서 호출됐다면 이 스킬의 문서 쓰기 절차는 기획 공간으로 인계한다. `manage-work`가 반환한 group.path가 기획·채번·문서 정리 위치이며, 워커 checkout의 STATE·SSOT를 변경하지 않는다.
+
+작업 묶음의 진행 상황은 공유 보드의 doing/blocked/ready/integrated를 사용한다. STATE에 todo로 남은 워커를 미착수로 서술하지 않는다.
 
 ## 1. 시작
 STATE 읽기 → log에 `- YYMMDD create-narrative start` → 재료 읽기: ssot/*(결정·근거·제약·[?])와 STATE(현황·next·log), 그리고 활성 tasks/*(진행 중인 것). 완료 태스크는 일괄로 읽지 않는다 — ⑤ '지금'은 STATE와 log로 쓰고, 이야기가 되는 특정 마일스톤만 `tasks/done/`에서 골라 연다.

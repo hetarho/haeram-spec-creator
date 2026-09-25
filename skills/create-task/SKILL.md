@@ -15,10 +15,14 @@ description: >-
 
 ## 공통 규칙 (모든 spec 스킬)
 1. 먼저 spec/STATE.md를 읽는다. 없으면 중단하고 create-architecture 실행을 안내한다.
-2. **문서 먼저**: 질문·추론·구현을 시작하기 전에 STATE.md에 시작을 기록하고(log 1줄 + 해당 st), 상태가 바뀔 때마다 즉시 반영한다. 병렬 세션은 STATE.md로만 서로를 안다.
+2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
+
+작업 묶음의 워커에서 호출됐다면 이 스킬의 문서 쓰기 절차는 기획 공간으로 인계한다. `manage-work`가 반환한 group.path가 기획·채번·문서 정리 위치이며, 워커 checkout의 STATE·SSOT를 변경하지 않는다.
+
+작업 묶음의 기획 공간에서는 `npx haeram-spec-creator work board --work <group> --json`의 attempt도 함께 확인한다. STATE에 todo로 남아 있어도 doing/blocked/ready/verifying/integrating 실행이 있으면 계약은 불변이다. 재분해가 필요하면 기존 작업자를 중단·해제한 뒤 처리한다.
 
 ## 1. 스코프와 델타
 입력은 두 종류다 — **SSOT 델타**(기획 변경)와 **리뷰 finding**(review-code가 뽑고 사용자가 채택한 리팩토링). 사용자가 지정하지 않으면 둘 다 처리한다.
@@ -40,10 +44,13 @@ ARCH·SSOT·기존 코드에 답이 있으면 묻지 않는다. 영역: 데이�
 - 각 태스크(FORMAT 골격): goal 1줄 / acceptance(검증 가능한 체크리스트) / impl notes(여기서 결정한 스키마·계약·라이브러리와 근거) / 인용줄에 st·ssot(관련 결정 ID)·base(`<ID>@rev`)·dep.
 - 리뷰 태스크: finding 하나 = 태스크 하나가 기본. 같은 파일·같은 원인이면 묶고, 한 세션에 못 끝낼 finding은 쪼갠다. 인용줄 ssot는 이 변경이 지키게 만드는 ARCH 결정(없으면 `-`), base는 항상 `ARCH@rev`. impl notes 첫 줄은 `- from review/<slug> Fn`. acceptance에 "동작 불변 — 기존 테스트 통과"와 finding이 요구하는 테스트를 넣는다. 기획 결정을 바꾸는 태스크는 만들지 않는다 — 그런 finding은 update-ssot로 넘기고 [?]로 되돌린다.
 - impl notes의 결정 중 **이후 변경이 계속 지켜야 하는 계약**(공개 API 형태, 저장 포맷, 호환성 규칙)은 태스크에만 두지 않는다 — 그건 기획·기준 문서의 몫이니 update-ssot(또는 ARCH 개정)를 제안하고, 태스크에는 이번 구현이 따를 형태만 남긴다.
-- dep 그래프와 순서를 정리한다. dep은 표의 활성 태스크 또는 `tasks/done/`의 완료 태스크를 가리킬 수 있고, 채번은 tasks/done/까지 포함한 최대 번호+1 — 이때 완료 태스크는 **파일명 목록만** 본다(내용 정독은 특정 태스크를 조사할 때뿐, FORMAT Reading). 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
+- dep 그래프와 순서를 정리한다. 자기참조·순환은 금지하고 태스크 인용줄과 STATE의 dep을 일치시킨다. 병렬 worktree에서 새 태스크를 만들 때는 태스크 생성 담당 checkout을 하나로 정해 채번한다 — 각 브랜치의 최대 번호+1은 전역적으로 유일하지 않다. dep은 표의 활성 태스크 또는 `tasks/done/`의 완료 태스크를 가리킬 수 있고, 채번은 tasks/done/까지 포함한 최대 번호+1 — 이때 완료 태스크는 **파일명 목록만** 본다(내용 정독은 특정 태스크를 조사할 때뿐, FORMAT Reading). 기존 todo 태스크와 겹치면 todo는 수정(base 갱신), doing·done은 불변 — 후속 태스크로 만든다.
 
 ## 4. 마감
 - 태스크마다 이 스킬 폴더의 assets/task.md를 복사해 `tasks/T###.<slug>.md`로 채운다(`<...>` 전부 교체) → STATE: tasks 행 추가(리뷰 태스크의 ssot 셀은 `ARCH`), next=`implement-task T###`(dep상 첫 것), log 1줄.
 - SSOT에서 만든 태스크: ssot 행 `tasked=rev`·pending `-`.
 - 리뷰에서 만든 태스크: 문서의 finding 끝에 `→T###`, 모든 [o]가 전환되면 문서 st→`converted@YYMMDD` + STATE review 행 갱신. ssot 행(tasked·pending)은 건드리지 않는다.
 - 보고: 태스크 목록과 순서 — novice에겐 각 태스크가 무엇을 만들어내는지 한 줄씩 설명.
+
+## 병렬 배정 힌트
+작업 묶음의 태스크를 만들 때 예상 변경 영역이 분명하면 인용줄의 선택 필드 `touches:src/auth/ prisma/schema.prisma`에 저장소 상대 경로를 기록한다. 공백으로 구분하며 glob·절대 경로·상위 경로는 쓰지 않는다. 같은 영역은 통합될 때까지 동시에 배정되지 않으므로 넓은 최상위 디렉토리는 피한다. 불확실하면 `touches:-`로 두고 병렬 안전성이 보장된다고 표현하지 않는다. dep은 실제 선행 결과가 필요한 관계에만 사용한다.

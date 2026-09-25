@@ -1,9 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST } from './spec-format.mjs'
+import { touchesErrors } from './work-policy.mjs'
+import { dependencyErrors } from './task-graph.mjs'
 
 const DOMAIN_ID = /^[A-Z]{2,6}$/
-const TASK_ID = /^T\d{3,}$/
-const TASK_ST = /^(todo|doing@\d{6}(\.[A-Za-z0-9]{2,8})?|done@\d{6}|blocked@\d{6})$/
 const DOC_ST = /^(open|ready|converted)@\d{6}$/ // ideation · review
 const FINDING_LINE = /^-\s+F(\d+)\s+\[(o|x|\?)\]\s+P[123]\s+\S/
 const LEVELS = new Set(['expert', 'mid', 'novice', '?'])
@@ -110,51 +111,6 @@ async function listIfExists(dirPath) {
   }
 }
 
-function sections(markdown) {
-  const map = new Map()
-  let current = null
-  for (const line of markdown.split(/\r?\n/)) {
-    const heading = line.match(/^##\s+(.+?)\s*$/)
-    if (heading) {
-      current = []
-      map.set(heading[1], current)
-    } else if (current) {
-      current.push(line)
-    }
-  }
-  return map
-}
-
-function tableRows(lines = []) {
-  const rows = []
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('|')) continue
-    const cells = trimmed.split('|').slice(1, -1).map((cell) => cell.trim())
-    if (cells.length === 0) continue
-    if (cells.every((cell) => /^:?-+:?$/.test(cell) || cell === '')) continue
-    rows.push(cells)
-  }
-  return rows.slice(1)
-}
-
-function quoteLine(markdown) {
-  for (const line of markdown.split(/\r?\n/)) {
-    if (line.startsWith('> ')) return line.slice(2).trim()
-  }
-  return null
-}
-
-function quoteFields(quote) {
-  const fields = new Map()
-  for (const part of quote.split('|')) {
-    const trimmed = part.trim()
-    const colon = trimmed.indexOf(':')
-    if (colon > 0) fields.set(trimmed.slice(0, colon).trim(), trimmed.slice(colon + 1).trim())
-  }
-  return fields
-}
-
 function cfgValues(lines = []) {
   const map = new Map()
   for (const line of lines) {
@@ -162,10 +118,6 @@ function cfgValues(lines = []) {
     if (match) map.set(match[1], match[2].trim())
   }
   return map
-}
-
-function splitRefs(cell) {
-  return (cell ?? '').split(/[\s,]+/).filter((ref) => ref && ref !== '-')
 }
 
 export async function lintSpec({ targetRoot } = {}) {
@@ -338,6 +290,8 @@ export async function lintSpec({ targetRoot } = {}) {
   // tasks
   const taskRows = tableRows(stateSections.get('tasks'))
   const taskIds = new Set(taskRows.map((row) => row[0]))
+  if (taskIds.size !== taskRows.length) errors.push('STATE tasks 표에 중복된 task ID가 있습니다.')
+  const taskGraph = new Map()
   const activeBaseByDomain = new Map()
   const fileByTaskId = new Map()
   for (const file of (await listIfExists(path.join(specRoot, 'tasks'))).filter((f) => f.endsWith('.md'))) {
@@ -357,6 +311,7 @@ export async function lintSpec({ targetRoot } = {}) {
       warnings.push(`tasks/done/${file}: T###.<slug>.md 형식이 아닙니다.`)
       continue
     }
+    if (doneIds.has(named[1])) errors.push(`완료 태스크 파일 중복: ${named[1]}`)
     doneIds.add(named[1])
     if (taskIds.has(named[1])) errors.push(`${named[1]}: tasks/done/ 아카이브와 STATE tasks 표에 동시에 있습니다 — done 행은 삭제하세요.`)
     if (fileByTaskId.has(named[1])) errors.push(`${named[1]}: tasks/와 tasks/done/에 파일이 모두 있습니다.`)
@@ -399,6 +354,12 @@ export async function lintSpec({ targetRoot } = {}) {
       continue
     }
     const fields = quoteFields(quote)
+    for (const value of touchesErrors(fields.get('touches'))) errors.push(`${file}: touches 경로 형식 오류: ${value}`)
+    const deps = splitRefs(fields.get('dep'))
+    taskGraph.set(id, deps)
+    if ([...new Set(deps)].sort().join(' ') !== [...new Set(splitRefs(depCell))].sort().join(' ')) {
+      warnings.push(`${id}: 파일 dep과 STATE dep이 다릅니다 — 두 문서의 의존성을 일치시키세요.`)
+    }
     for (const key of ['st', 'ssot', 'base', 'dep']) {
       if (!fields.has(key)) errors.push(`tasks/${file}: 인용줄에 ${key}: 필드가 없습니다.`)
     }
@@ -439,6 +400,13 @@ export async function lintSpec({ targetRoot } = {}) {
   }
   for (const [id, file] of fileByTaskId) {
     if (!taskIds.has(id)) errors.push(`tasks/${file}이 STATE tasks 표에 없습니다.`)
+  }
+  errors.push(...dependencyErrors(taskGraph, doneIds))
+  // Both legacy STATE and task files may be read by clients during migration.
+  // Reject a cycle in either view, without duplicating identical diagnostics.
+  const stateGraph = new Map(taskRows.map(([id, , , deps]) => [id, splitRefs(deps)]))
+  for (const error of dependencyErrors(stateGraph, doneIds)) {
+    if (!errors.includes(error)) errors.push(error)
   }
   counts.tasks = taskIds.size
   counts.done = doneIds.size

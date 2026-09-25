@@ -1,5 +1,5 @@
 # T<###> <title>
-> st:todo | ssot:<ID>-<n> <ID>-<n> | base:<ID>@<rev> | dep:-
+> st:todo | ssot:<ID>-<n> <ID>-<n> | base:<ID>@<rev> | dep:- | touches:-
 
 ## goal
 <one line>
@@ -13,6 +13,6 @@
 
 ## result
 - outcome: <what works now>
-- at: <git sha7 the checks ran on, or ->
+- at: <git commit SHA the checks ran on, or ->
 - verified: <the checks that actually ran>
 - limits: <what is still open, or ->
