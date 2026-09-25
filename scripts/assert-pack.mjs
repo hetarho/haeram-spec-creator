@@ -19,6 +19,9 @@ const report = JSON.parse(result.stdout)
 const packedFiles = new Set(report[0].files.map((file) => file.path))
 const requiredCoreFiles = [
   'bin/haeram-spec-creator.mjs',
+  'bin/haeram-agent-adapter.mjs',
+  'src/agent-adapter.mjs',
+  'src/work-providers.mjs',
   'src/index.mjs',
   'package.json',
   'README.md',

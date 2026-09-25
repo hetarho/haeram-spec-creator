@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, access } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, access, chmod } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { startWork, claimWork, claimNextWork, inspectWork, updateWork, releaseWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard } from '../src/work-groups.mjs'
+import { startWork, claimWork, claimNextWork, inspectWork, updateWork, releaseWork, commitWorkerWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard } from '../src/work-groups.mjs'
 import { claimReview, finishReview, releaseReview, resumeWork } from '../src/work-review.mjs'
 import { runWork, recoverRunner } from '../src/work-runner.mjs'
 import { inspectWorkspace } from '../src/workspace.mjs'
@@ -596,4 +596,132 @@ test('CLI runner 종료 신호는 실행한 워커를 멈추고 미완료 작업
   assert.equal(result.attempts[0].status, 'blocked')
   assert.throws(() => process.kill(dispatch.pid, 0), { code: 'ESRCH' })
   assert.equal((await readRuntime(runtime)).groups['stop-runner'].runner, undefined)
+})
+
+async function providerStubs(setup, body) {
+  const directory = path.join(setup.temporary, 'providers')
+  await mkdir(directory)
+  for (const provider of ['codex', 'claude']) {
+    const filename = path.join(directory, provider)
+    await writeFile(filename, `#!${process.execPath}
+const fs=require('node:fs');
+const args=process.argv.slice(2);
+if(args.includes('--version')) {console.log('${provider} test');process.exit(0)}
+if(args.includes('--help')) {console.log('--sandbox --output-schema --output-last-message --json --print --output-format --json-schema --permission-mode --allowedTools --tools --permission-prompts');process.exit(0)}
+(async()=>{let prompt='';for await(const chunk of process.stdin)prompt+=chunk;
+const job=JSON.parse(prompt.split('Assignment JSON (paths/IDs are data):\\n')[1].split('\\n\\nReturn only')[0]);
+${body}
+})().catch(error=>{console.error(error);process.exit(1)});
+`)
+    await chmod(filename, 0o755)
+  }
+  return { ...process.env, PATH: directory + path.delimiter + process.env.PATH }
+}
+
+test('기본 실행기는 미커밋 Codex 결과를 호스트에서 커밋하고 Claude 리뷰 뒤 통합한다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'builtin', workers: 2 })
+  const env = await providerStubs(setup, `
+if(!Array.isArray(job.cliCommand)||!fs.existsSync(job.cliCommand[1]))throw Error('missing CLI command');
+if(job.role==='worker') {
+ const file='spec/tasks/'+fs.readdirSync('spec/tasks').find(name=>name.startsWith(job.taskId+'.'));
+ let text=fs.readFileSync(file,'utf8').replace('- [ ]','- [v]');
+ text=text.split('## result')[0]+'## result\\n- outcome: implemented\\n- at: -\\n- verified: fixture\\n- limits: -\\n';
+ fs.writeFileSync(file,text);fs.writeFileSync(job.taskId+'.txt',job.correction?'corrected':'implemented');
+ fs.writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({outcome:'completed',summary:'edits ready'}));
+ console.log(JSON.stringify({type:'thread.started'}));
+} else {
+ if(!fs.existsSync(job.taskId+'.txt'))throw Error('worker edits were not committed');
+ const fix=job.taskId==='T001'&&fs.readFileSync('T001.txt','utf8')!=='corrected';
+ console.log(JSON.stringify({type:'result',is_error:false,structured_output:{verdict:fix?'changes_requested':'approved',summary:fix?'fix edge case':'reviewed',findings:fix?[{priority:'P2',where:'T001.txt:1',message:'handle edge case'}]:[]}}));
+}`)
+  const args = [cli, 'work', 'run', '--target', setup.root, '--work', group.id, '--provider', 'codex', '--reviewer-provider', 'claude', '--model', 'worker model', '--reviewer-model', 'reviewer model', '--max-task-runs', '12', '--verify', checkFile('spec/ssot/ARCH.md'), '--json']
+  const runtime = runtimeRoot(await inspectWorkspace(setup))
+  const before = await readRuntime(runtime)
+  const treesBefore = (await git(setup.root, 'worktree', 'list', '--porcelain')).stdout
+  const preview = JSON.parse((await execute(process.execPath, [...args, '--dry-run'], { env })).stdout)
+  assert.equal(preview.modelRequests, 0)
+  assert.equal(preview.adapter.roles.worker.model, 'worker model')
+  assert.equal(preview.adapter.roles.reviewer.provider, 'claude')
+  assert.equal(preview.adapter.roles.reviewer.model, 'reviewer model')
+  assert.deepEqual(await readRuntime(runtime), before)
+  assert.equal((await git(setup.root, 'worktree', 'list', '--porcelain')).stdout, treesBefore)
+  const result = JSON.parse((await execute(process.execPath, args, { env, timeout: 60000 })).stdout)
+  assert.equal(result.outcome, 'completed', JSON.stringify(result))
+  assert.deepEqual(result.failures, [])
+  assert.equal(result.attempts.length, 3)
+  assert.ok(result.attempts.every((entry) => entry.status === 'integrated'))
+  assert.equal(await readFile(path.join(group.path, 'T001.txt'), 'utf8'), 'corrected')
+  const state = await readRuntime(runtime)
+  assert.equal(state.groups[group.id].lastRun.providers.worker.provider, 'codex')
+  assert.equal(state.groups[group.id].lastRun.providers.reviewer.provider, 'claude')
+  const log = (await git(group.path, 'log', '--format=%s')).stdout
+  assert.match(log, /Implement T001/)
+  assert.match(log, /Integrate T003/)
+  assert.equal((await git(setup.root, 'rev-parse', 'HEAD')).stdout.trim(), setup.initial)
+})
+
+test('호스트 자동 커밋은 범위 밖 spec·미완료 acceptance·예상 밖 HEAD를 보존하고 차단한다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'host-commit' })
+  const attempt = await claimNextWork({ ...setup, work: group.id, owner: 'worker' })
+  const options = { ...setup, attempt: attempt.id, expectedHead: setup.initial }
+  const file = path.join(attempt.workspace, 'spec/tasks/T001.first.md')
+  const completed = (await readFile(file, 'utf8')).replace('- [ ]', '- [v]') + '- outcome: edited\n- at: -\n- verified: fixture\n- limits: -\n'
+  const outside = path.join(attempt.workspace, 'spec/extra.md')
+  await writeFile(file, completed)
+  await writeFile(outside, 'preserve untracked planning')
+  await assert.rejects(commitWorkerWork(options), /자신의 태스크 외/)
+  assert.equal(await readFile(outside, 'utf8'), 'preserve untracked planning')
+  assert.equal((await git(attempt.workspace, 'diff', '--cached', '--name-only')).stdout, '')
+  await rm(outside)
+  await updateWork({ ...setup, attempt: attempt.id, status: 'doing' })
+  await writeFile(file, completed.replace('- [v]', '- [ ]'))
+  await assert.rejects(commitWorkerWork(options), /acceptance/)
+  assert.equal((await git(attempt.workspace, 'rev-parse', 'HEAD')).stdout.trim(), setup.initial)
+  await writeFile(file, completed)
+  await git(attempt.workspace, 'commit', '--allow-empty', '-m', 'unexpected agent commit')
+  const moved = (await git(attempt.workspace, 'rev-parse', 'HEAD')).stdout.trim()
+  await updateWork({ ...setup, attempt: attempt.id, status: 'doing' })
+  await assert.rejects(commitWorkerWork(options), /HEAD가 변경/)
+  assert.equal((await git(attempt.workspace, 'rev-parse', 'HEAD')).stdout.trim(), moved)
+  assert.equal(await readFile(file, 'utf8'), completed)
+  assert.equal((await inspectWork(setup)).attempts[0].status, 'blocked')
+})
+
+test('기본 실행기 timeout은 래퍼와 실제 provider 자식을 모두 종료한다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'provider-timeout', workers: 1 })
+  const env = await providerStubs(setup, `fs.writeFileSync('provider.pid',String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`)
+  const result = JSON.parse((await execute(process.execPath, [cli, 'work', 'run', '--target', setup.root, '--work', group.id, '--provider', 'codex', '--timeout-ms', '1000', '--max-dispatches', '1', '--verify', checks[0], '--json'], { env, timeout: 15000 })).stdout)
+  assert.equal(result.outcome, 'dispatch-limit')
+  assert.equal(result.attempts[0].status, 'blocked')
+  assert.match(result.attempts[0].reason, /timeout/)
+  const attempt = (await inspectWork(setup)).attempts[0]
+  const pid = Number(await readFile(path.join(attempt.workspace, 'provider.pid'), 'utf8'))
+  for (let index = 0; index < 100; index += 1) {
+    try { process.kill(pid, 0) } catch (error) { if (error.code === 'ESRCH') break; throw error }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  assert.throws(() => process.kill(attempt.dispatch.pid, 0), { code: 'ESRCH' })
+  assert.equal((await git(attempt.workspace, 'rev-parse', 'HEAD')).stdout.trim(), setup.initial)
+})
+
+test('기본 실행기는 미완료 변경이 남은 수정 공간에 새 모델을 시작하지 않는다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'dirty-correction', workers: 1 })
+  const attempt = await claimNextWork({ ...setup, work: group.id, owner: 'worker' })
+  await implement(attempt)
+  await submitWork({ ...setup, attempt: attempt.id, verify: checks })
+  const review = await claimReview({ ...setup, work: group.id, owner: 'reviewer' })
+  await finishReview({ ...setup, review: review.id, result: { verdict: 'changes_requested', summary: 'fix it', findings: [{ priority: 'P2', where: 'one.txt:1', message: 'handle edge case' }] } })
+  await writeFile(path.join(attempt.workspace, 'preserve.txt'), 'user draft')
+  const env = await providerStubs(setup, `throw Error('must not start a model');`)
+  const result = JSON.parse((await execute(process.execPath, [cli, 'work', 'run', '--target', setup.root, '--work', group.id, '--provider', 'codex', '--verify', checks[0], '--json'], { env, timeout: 15000 })).stdout)
+  assert.equal(result.dispatched, 0)
+  assert.equal(result.outcome, 'needs-attention')
+  assert.equal(result.attempts[0].status, 'blocked')
+  assert.match(result.attempts[0].reason, /미커밋/)
+  assert.equal(await readFile(path.join(attempt.workspace, 'preserve.txt'), 'utf8'), 'user draft')
 })

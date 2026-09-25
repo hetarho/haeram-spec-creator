@@ -4,16 +4,28 @@
 
 ## 일반 터미널: work run
 
-사용자가 여러 태스크의 지속 실행을 요청했을 때 사용한다. 어댑터는 에이전트 실행 도구에 맞춘 로컬 프로그램이며 자동으로 특정 제품을 추정하거나 설치하지 않는다. 기존 어댑터가 없으면 사용 중인 실행 도구의 실제 명령/출력 규약을 확인한 뒤 연결한다. 실행기는 리뷰·검증 통과 후 작업 묶음 브랜치까지 자동 통합한다. main 반영·push는 수행하지 않는다.
+사용자가 여러 태스크의 지속 실행을 요청했을 때 사용한다. Codex·Claude CLI용 기본 어댑터가 포함돼 있다. `work doctor`로 설치·필수 옵션 지원과 Orca runtime 접근 여부를 확인한다. CLI 로그인·요금·모델 접근 권한은 검사하지 않으며, doctor와 dry-run은 모델을 호출하지 않는다. 실행기는 리뷰·검증 통과 후 작업 묶음 브랜치까지 자동 통합한다. main 반영·push는 수행하지 않는다.
 
 ```bash
 npx haeram-spec-creator work start feature --workers 4 --reviewers 1 --max-pending 8 --json
-npx haeram-spec-creator work run --work feature --adapter /absolute/path/adapter.json --verify 'npm ci && npm test' --json
+npx haeram-spec-creator work doctor --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --dry-run --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --json
 ```
 
 기존 그룹은 기록된 한도를 사용하고, 한도 기록이 없는 그룹은 4/1/8을 사용한다. `--verify`를 반복해 ARCH 검증 명령을 전달한다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
 
-어댑터 JSON 예:
+`--provider auto`가 기본이며 호환되는 Codex, Claude 순으로 선택한다. Orca 설치 여부로 실행 방식을 바꾸지 않는다. reviewer-provider를 생략하면 worker와 같은 도구를 사용한다. `--model`·`--reviewer-model`을 생략하면 각 CLI의 설정을 사용한다. 같은 도구의 리뷰어는 명시한 worker 모델을 상속하고, 다른 도구의 리뷰어는 모델을 따로 지정하지 않으면 그 CLI 기본값을 사용한다. 임의로 모델을 추정하거나 설치·로그인하지 않는다.
+
+기본 어댑터는 배포된 implement-task/review-task 본문과 배정 정보를 매 실행에 전달한다. Codex는 worker에 workspace-write, reviewer에 read-only sandbox를 지정하고 JSON schema와 최종 결과 파일을 사용한다. Claude는 worker에 acceptEdits, reviewer에 plan 권한 모드와 역할별 도구 목록을 지정하고 structured_output을 읽는다. 기존 인증·권한 정책을 사용하며 권한을 건너뛰는 옵션은 사용하지 않는다. Claude의 shell 검사 등 허용되지 않은 명령은 사전에 프로젝트 정책에 맞게 설정하거나 blocked로 인계한다. 호스트의 `--verify` 명령은 별도로 실행된다. CLI 출력 형식이 맞지 않거나 종료 코드가 실패면 완료로 취급하지 않는다. 규약 근거: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive/), [Claude headless 실행](https://code.claude.com/docs/en/headless).
+
+기본 어댑터의 워커는 코드와 자신의 태스크만 편집하고 커밋하지 않는다. 호스트가 시작 시 깨끗한 작업 공간과 HEAD를 기록하고, 종료 시 acceptance·계약·SSOT·spec 변경 범위를 검사한 뒤 커밋한다(`committing`). 이어 검증·제출한다. 예상 밖 HEAD 변경이나 계약 위반은 blocked로 남기며 변경을 되돌리지 않는다. sandbox의 공용 Git 디렉토리 쓰기 권한을 넓히지 않아도 된다.
+
+기본값은 작업별 timeout 1시간, 전체 dispatch 200회, 태스크별·역할별 실행 3회다. `--timeout-ms`·`--max-dispatches`·`--max-task-runs`로 지정할 수 있다. JSON 설정도 가능하다: `{"provider":"codex","reviewerProvider":"claude","maxTaskRuns":3}`를 파일에 저장하고 `--adapter <file>`로 전달한다. provider/model CLI 옵션과 adapter 파일은 함께 지정하지 않는다.
+
+## 다른 실행기의 command 어댑터
+
+다른 도구는 다음 JSON 파일을 `--adapter /absolute/path/adapter.json`으로 연결한다:
 
 ```json
 {
@@ -29,8 +41,8 @@ command는 셸을 거치지 않고 실행한다. 상대 command 경로는 설정
 
 stdin은 JSON 객체 한 줄이다:
 - `schemaVersion:1`, `dispatchId`, `role:worker|reviewer`, `slot`, `group`, `attempt`, `taskId`, `workspace`, `groupBranch`.
-- `instruction`: 실행 역할과 완료 절차. worker는 commit까지, reviewer는 결과 JSON 반환까지 수행한다. submit/review-finish는 runner 소유이므로 중복 호출하지 않는다.
-- `verify`: 실제 검증 명령 배열. `boardCommand`: 최신 상태 조회용 CLI 인자.
+- `instruction`: 실행 역할과 완료 절차. command 어댑터의 worker는 commit까지, reviewer는 결과 JSON 반환까지 수행한다. 기본 어댑터에서는 worker 커밋도 호스트가 담당한다. submit/review-finish는 runner 소유이므로 중복 호출하지 않는다.
+- `verify`: 실제 검증 명령 배열. `cliCommand`: 현재 패키지 CLI의 실행 파일과 절대 경로 인자 배열. 여기에 `boardCommand`를 이어 붙여 최신 상태를 조회한다.
 - `correction`: 수정 요청을 재배정할 때 이전 리뷰와 findings; 없으면 null.
 - `review`: 리뷰 배정 시 id, submissionId, commit, baseCommit, workspace, owner. 없으면 null.
 
@@ -50,7 +62,9 @@ runner는 빈 슬롯을 채우고 수정 요청을 우선 배정하며 리뷰 �
 
 ## Orca 또는 다른 coordinator
 
-Orca를 사용하면 work run 대신 coordinator가 위 역할을 수행할 수 있다. [Orca 공식 orchestration 문서](https://www.onorca.dev/docs/cli/orchestration)와 설치된 CLI의 `orca skills get orchestration --full`을 확인해 실제 버전의 명령을 사용한다. 제품별 자동 감지·모델 실행 명령을 하드코딩한 Orca 전용 어댑터는 이 패키지에 포함하지 않는다.
+Orca를 사용하면 work run 대신 coordinator가 위 역할을 수행할 수 있다. [Orca 공식 orchestration 문서](https://www.onorca.dev/docs/cli/orchestration)와 설치된 CLI의 `orca skills get orchestration --full`을 확인해 실제 버전의 명령을 사용한다. Orca pane/task/dispatch를 자동으로 생성·연결하는 전용 실행 어댑터는 아직 포함하지 않는다.
+
+`work doctor`는 PATH의 orca/orca-dev/orca-ide와 macOS 앱에 포함된 CLI를 검사한다. 앱만 설치해도 `/Applications/Orca.app/Contents/Resources/bin/orca`를 찾을 수 있고, 터미널에서 `orca`로 쓰려면 Settings → General → Orca CLI에서 등록한다([공식 안내](https://www.onorca.dev/docs/troubleshooting)). 다른 설치 경로는 `ORCA_CLI_COMMAND` 환경 변수로 실행 파일 경로를 지정한다. 앱 실행·PATH 수정·Orca 작업 생성은 doctor가 수행하지 않는다.
 
 1. 빈 worker 슬롯: `work resume`로 수정 요청을 확인하고, 없으면 `work claim-next`. 반환된 attempt/workspace로 실행한다. 외부 도구가 이미 공간을 만들었다면 그 공간에서 `--workspace current`로 선점한다.
 2. worker 완료 알림: 알림의 dispatch↔attempt 매핑을 확인하고 `work submit` 실행. 실행 완료 메시지를 태스크 done으로 취급하지 않는다.

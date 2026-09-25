@@ -1,7 +1,7 @@
 import { SkillPackageError } from './errors.mjs'
 
 export const activeAttempt = (attempt) => !['released', 'failed', 'integrated'].includes(attempt.status)
-export const workerBusy = (attempt) => ['preparing', 'doing', 'verifying'].includes(attempt.status)
+export const workerBusy = (attempt) => ['preparing', 'doing', 'committing', 'verifying'].includes(attempt.status)
 export const pendingReview = (attempt) => ['ready', 'reviewing', 'approved', 'integrating'].includes(attempt.status)
 
 export function workLimits(options = {}) {

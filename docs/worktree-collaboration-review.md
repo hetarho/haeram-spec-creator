@@ -69,10 +69,11 @@ Git은 linked worktree별 HEAD/index와 공통 저장소 메타데이터를 구�
 - `work board`는 상위 브랜치의 특정 커밋에 고정한 태스크와 runtime을 합쳐 표시한다. 일반 board는 계속 checkout별 읽기 전용 조회다.
 - `work submit`은 커밋된 worker의 acceptance·계약·SSOT 일치를 확인하고 명시한 검사 명령을 실행해 ready를 기록한다. `work integrate`는 별도 후보에서 merge·done 아카이브·STATE 갱신·spec 검사·커밋·검증을 수행한 뒤, 기준이 변하지 않은 기획 공간에 fast-forward한다.
 - `work update/release/cleanup/recover/unlock`으로 blocked/heartbeat, 선점 해제, 자체 생성 worker 정리, 외부 worktree의 배정 해제, 중단된 명령 복구를 지원한다. 임의의 TTL 회수·force 삭제·원격 push는 없다.
-- 스킬 10개가 공통 배정 규칙을 사용한다. 워커는 자신의 task acceptance/result 외 spec을 쓰지 않고, 기획·채번·STATE 변경은 기획 공간에서 직렬로 수행한다. 기존 단독 작업의 STATE 골격은 유지한다.
+- 스킬 11개가 공통 배정 규칙을 사용한다. 워커는 자신의 task acceptance/result 외 spec을 쓰지 않고, 기획·채번·STATE 변경은 기획 공간에서 직렬로 수행한다. 기존 단독 작업의 STATE 골격은 유지한다.
 - 기존 dep 표기를 유지하면서 참조·순환·자기참조·중복 ID·STATE/file 불일치를 검사한다.
+- claim-next·수정 우선 resume·독립 review-task와 고정 커밋 승인으로 워커/리뷰어 큐를 처리한다. `work run`은 Codex/Claude 기본 어댑터 또는 command 어댑터로 실행·검증·리뷰·통합을 반복한다.
 
-현재 지원 범위는 같은 로컬 clone이다. 별도 clone/원격 조정, 자동 에이전트 실행, 경쟁 fan-out, 자동 main 반영은 후속 확장이다. 브랜치와 실패 후보는 복구를 위해 남을 수 있다. 실제 Orca 앱의 실행/종료 API 연동은 포함하지 않고 일반 Git worktree 계약으로 연결한다.
+현재 지원 범위는 같은 로컬 clone이다. 별도 clone/원격 조정, 경쟁 fan-out, 자동 main 반영은 후속 확장이다. 브랜치와 실패 후보는 복구를 위해 남을 수 있다. Orca 앱에 포함된 CLI와 runtime은 doctor로 확인하며, 실제 task/dispatch 실행·종료 API 연동은 포함하지 않고 일반 Git worktree 계약으로 연결한다.
 
 보드는 여러 데이터 소스를 읽는 관측 결과이며 선점을 대신하지 않는다. 최신 정책 적용은 워커의 명시적 동기화·재검증을 요구한다. 코드 파일에 대한 일반 Git/에디터 동작은 로컬 배정 프로토콜을 우회할 수 있으므로, 기획 공간에 쓰기 담당을 하나로 유지한다.
 
@@ -159,5 +160,6 @@ Git은 linked worktree별 HEAD/index와 공통 저장소 메타데이터를 구�
 - 기본 workers=4, reviewers=1, max-pending=8. 수정 요청을 우선 재배정하고 리뷰 적체 시 새 작업을 줄인다. 항상 슬롯을 채우거나 최적 일정을 보장하지 않는다.
 - 제출→리뷰 선점→승인/수정 요청→통합으로 전이한다. 승인에 submission ID와 worker/target commit을 고정한다. 타깃 이동 시 무관한 변경도 재리뷰하는 보수적 초기 정책이다.
 - review-task를 추가하고 기존 review-code의 개선 제안·사용자 채택 절차는 유지한다.
-- work run은 명시적인 JSON stdio 어댑터로 실제 프로세스를 실행하고 완료 후 보충·리뷰·직렬 통합한다. 자동 모델 선택이나 Orca CLI 추정은 하지 않는다. Orca coordinator는 같은 CLI 프로토콜을 직접 사용 가능하다.
+- work run은 Codex/Claude 기본 어댑터 또는 JSON stdio command 어댑터로 실제 프로세스를 실행하고 완료 후 보충·리뷰·직렬 통합한다. 기본 provider auto는 호환되는 Codex, Claude 순으로 선택하며 reviewer-provider로 역할을 나눌 수 있다. 모델은 명시한 값이나 각 CLI 설정을 사용한다. doctor와 dry-run은 모델 호출 없이 도구·설정을 확인한다. Orca 설치 여부로 실행 모드를 바꾸지 않으며 coordinator는 같은 CLI 프로토콜을 직접 사용할 수 있다.
+- 기본 어댑터는 워커에게 파일 편집을 맡기고 호스트가 시작 HEAD·acceptance·계약·spec 변경 범위를 확인한 뒤 커밋·제출한다. 리뷰어는 고정 snapshot을 읽는다. 이 흐름과 중단 시 자식 프로세스 종료는 가짜 provider CLI를 사용하는 통합 테스트로 검증한다. 실제 모델 실행 성공이나 인증 상태를 CLI 감지만으로 보장하지 않는다.
 - 이번 범위에 포함하지 않은 것: Orca 전용 실행 어댑터, 원격 clone 간 상태 공유, 코드 의미를 분석한 무관한 변경의 재리뷰 생략, 자동 워크스페이스 삭제. 스킬 문구만으로 실제 실행기가 연결됐다고 보고하지 않는다.

@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { builtInAdapter } from './work-providers.mjs'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { inspectWork, claimNextWork, submitWork, integrateWork, workBoard, workInternals } from './work-groups.mjs'
+import { inspectWork, claimNextWork, commitWorkerWork, submitWork, integrateWork, workBoard, workInternals } from './work-groups.mjs'
 import { claimReview, finishReview, releaseReview, resumeWork } from './work-review.mjs'
 import { readRuntime, transaction } from './work-runtime.mjs'
 import { workLimits } from './work-policy.mjs'
@@ -31,14 +33,23 @@ export async function recoverRunner(options) {
   })
 }
 
-async function adapterConfig(file) {
-  if (!file) fail('run에는 실행할 어댑터 설정 --adapter <json-file>이 필요합니다.')
-  const filename = path.resolve(file)
-  const config = JSON.parse(await readFile(filename, 'utf8'))
-  if (!config || typeof config.command !== 'string' || !config.command || !Array.isArray(config.args) || config.args.some((value) => typeof value !== 'string')) fail('어댑터 설정에는 command와 문자열 args 배열이 필요합니다.')
-  if (config.command.includes('/') && !path.isAbsolute(config.command)) config.command = path.resolve(path.dirname(filename), config.command)
+async function adapterConfig(options) {
+  let config
+  const providerOptions = ['provider', 'reviewerProvider', 'model', 'reviewerModel']
+  if (options.adapter) {
+    if (providerOptions.some((key) => options[key] !== undefined)) fail('--adapter와 --provider/--model 옵션을 함께 지정할 수 없습니다.')
+    const filename = path.resolve(options.adapter)
+    config = JSON.parse(await readFile(filename, 'utf8'))
+    if (config?.provider && config.command) fail('어댑터 설정은 provider 또는 command 중 하나만 지정하세요.')
+    if (config?.provider) config = await builtInAdapter({ ...config, targetRoot: options.targetRoot })
+    else {
+      if (!config || typeof config.command !== 'string' || !config.command || !Array.isArray(config.args) || config.args.some((value) => typeof value !== 'string')) fail('어댑터 설정에는 command와 문자열 args 배열이 필요합니다.')
+      config.kind = 'custom'
+      if (config.command.includes('/') && !path.isAbsolute(config.command)) config.command = path.resolve(path.dirname(filename), config.command)
+    }
+  } else config = await builtInAdapter(options)
   for (const [key, fallback] of [['timeoutMs', 3600000], ['maxDispatches', 200], ['maxTaskRuns', 3]]) {
-    config[key] ??= fallback
+    config[key] = Number(options[key] ?? config[key] ?? fallback)
     if (!Number.isSafeInteger(config[key]) || config[key] < 1) fail(`${key}: 양의 정수가 필요합니다.`)
   }
   return config
@@ -46,9 +57,13 @@ async function adapterConfig(file) {
 
 export async function runWork(options) {
   const verify = commands(options)
-  const config = await adapterConfig(options.adapter)
+  const config = await adapterConfig(options)
   const context = await repository(options)
-  const run = { id: randomUUID(), pid: process.pid, host: os.hostname(), startedAt: now() }
+  if (options.dryRun) {
+    const group = groupOf(await readRuntime(context.root), options.work)
+    return { schemaVersion: 1, dryRun: true, work: group.id, limits: workLimits(group.limits), adapter: config, verify, modelRequests: 0 }
+  }
+  const run = { adapter: config.kind, providers: config.roles ? Object.fromEntries(Object.entries(config.roles).map(([role, entry]) => [role, { provider: entry.provider, model: entry.model, version: entry.version }])) : null, id: randomUUID(), pid: process.pid, host: os.hostname(), startedAt: now() }
   const group = await transaction(context.root, (state) => {
     const group = groupOf(state, options.work)
     if (group.runner) fail('작업 묶음에 runner가 이미 있습니다. 종료 후 runner-recover로 확인하세요.', [JSON.stringify(group.runner)])
@@ -93,8 +108,19 @@ export async function runWork(options) {
       else await transaction(context.root, (state) => { Object.assign(attemptOf(state, attempt.id), { status: 'blocked', reason: 'runner stopped before launch' }) })
       return
     }
+    const workspace = review?.workspace ?? attempt.workspace
+    let expectedHead = null
+    try {
+      if (config.kind === 'builtin') await workInternals.requireClean(workspace)
+      if (config.kind === 'builtin' && role === 'worker') expectedHead = await workInternals.head(workspace)
+    } catch (error) {
+      failures.push({ attempt: attempt.id, role, error: error.message })
+      if (review) await releaseReview({ ...options, review: review.id, reason: error.message })
+      await transaction(context.root, (state) => { Object.assign(attemptOf(state, attempt.id), { status: 'blocked', reason: error.message }) })
+      return
+    }
     const id = randomUUID()
-    const job = { id, role, attempt: attempt.id, slot, review, workspace: review?.workspace ?? attempt.workspace, settled: false }
+    const job = { id, role, attempt: attempt.id, slot, review, expectedHead, workspace: review?.workspace ?? attempt.workspace, settled: false }
     await transaction(context.root, (state) => {
       attemptOf(state, attempt.id).dispatch = { id, runner: run.id, role, slot, status: 'starting', pid: null, host: os.hostname(), startedAt: now() }
     })
@@ -104,12 +130,15 @@ export async function runWork(options) {
     counts.set(key, (counts.get(key) ?? 0) + 1)
     const payload = { schemaVersion: 1, dispatchId: id, role, slot, group: group.id, attempt: attempt.id,
       taskId: attempt.taskId, workspace: job.workspace, groupBranch: group.branch,
+      cliCommand: [process.execPath, fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.url))],
       boardCommand: ['work', 'board', '--work', group.id, '--json'],
       verify, review: review ?? null, correction: attempt.correction ?? null,
       instruction: role === 'worker'
         ? 'Use implement-task. Implement or fix review findings in this workspace, check acceptance, fill result, and commit. Return JSON {"outcome":"completed","summary":"..."}. The runner owns submit; do not submit, integrate, or claim another task. For a blocker return {"outcome":"blocked","summary":"reason"}.'
         : 'Use review-task. Review the pinned commit against baseCommit, task, and SSOT. Do not edit or commit. Return JSON {"verdict":"approved|changes_requested","summary":"...","findings":[{"priority":"P1|P2|P3","where":"file:line","message":"..."}]}. The runner owns review-finish.' }
-    const child = spawn(config.command, config.args, { cwd: job.workspace, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, HAERAM_ROLE: role, HAERAM_ATTEMPT: attempt.id, HAERAM_DISPATCH: id } })
+    const adapter = config.roles?.[role] ?? config
+    if (config.kind === 'builtin' && role === 'worker') payload.instruction = 'Use implement-task to edit and verify your task. Do not commit or submit; the host runner validates scope, commits and submits. Return JSON with outcome completed|blocked and summary.'
+    const child = spawn(adapter.command, adapter.args, { cwd: job.workspace, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, HAERAM_ROLE: role, HAERAM_ATTEMPT: attempt.id, HAERAM_DISPATCH: id } })
     job.child = child
     let output = '', stderr = '', overflow = false
     job.promise = new Promise((resolve) => {
@@ -137,6 +166,7 @@ export async function runWork(options) {
       if (job.role === 'reviewer') await finishReview({ ...options, review: job.review.id, result })
       else {
         if (result.outcome !== 'completed') fail(result.summary || 'worker did not complete')
+        if (config.kind === 'builtin') await commitWorkerWork({ ...options, attempt: job.attempt, expectedHead: job.expectedHead, signal: abort.signal })
         await submitWork({ ...options, attempt: job.attempt, verify, signal: abort.signal })
       }
     } catch (error) {

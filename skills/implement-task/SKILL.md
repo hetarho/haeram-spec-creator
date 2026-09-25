@@ -40,7 +40,8 @@ description: >-
 ① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx -y haeram-spec-creator lint`로 spec 정합성을 검사하고 오류·경고는 고친다(네트워크·CLI가 없으면 생략) — 출력의 `검토 후보`는 구조 위반이 아니라 문서 품질 신호라 여기서 고치지 않고, 쌓이면 단독 작업의 next에 `doc-review <ID>`를 남기고, 묶음 워커는 result limits로 기획 공간에 인계한다. ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다. 마지막으로 done 직전 신선도 재확인(2단계와 동일, 현재 checkout 기준이며 다른 브랜치의 SSOT 변경은 자동으로 보이지 않음) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
 
 ## 5. 마감
-- 실행기가 `commit-only` 또는 제출은 runner가 담당한다고 지정했다면 아래 작업 묶음 절차에서 commit까지 수행하고 지정된 JSON 결과를 반환한다. submit·재배정·통합은 runner가 담당한다. 수정 배정에는 전달된 correction findings를 먼저 읽고 acceptance와 함께 확인한다.
+- 기본 어댑터가 커밋도 호스트가 담당한다고 지정했다면 코드·acceptance·result를 채우고 지정된 JSON 결과를 반환한다. git add/commit·submit은 실행하지 않는다. 호스트가 변경 범위·시작 HEAD를 확인하고 커밋·검증·제출한다. 아직 커밋되지 않은 변경을 검사했다면 result at은 `-`로 쓰고, 실제 실행한 검사만 verified에 적는다.
+- 커밋은 워커에게 맡기는 `commit-only` 실행기라면 아래 작업 묶음 절차에서 commit까지 수행하고 지정된 JSON 결과를 반환한다. submit·재배정·통합은 runner가 담당한다. 모든 수정 배정에서 전달된 correction findings를 먼저 읽고 acceptance와 함께 확인한다.
 - **작업 묶음 워커**는 아래 result 4줄을 채우고 코드와 자신의 태스크 변경만 커밋한 뒤 `npx haeram-spec-creator work submit --attempt <id> --verify '<ARCH command>' --json`으로 실제 검증을 실행한다(`--verify` 반복 가능). 그룹 작업을 수행하도록 받은 지시의 범위에 커밋이 포함되지 않았거나 금지됐다면 결과를 보존하고 제출에 필요한 커밋을 보고한다. 명령 성공 시 리뷰 대기 ready이며, STATE 갱신·done 표기·아카이브 이동은 하지 않고 관리 세션에 attempt와 검증 커밋을 전달한다. 통합과 정리는 `manage-work`가 수행한다.
 - 아래 아카이브·STATE 마감 절차는 **단독 흐름에만** 적용한다.
 - 태스크 `## result`(FORMAT 골격, 4줄): `- outcome:` 무엇이 되게 됐는지 / `- at:` 검증을 돌린 커밋 SHA(git이 없으면 `-`) / `- verified:` 실제로 통과시킨 검사 / `- limits:` 남은 한계·후속(없으면 `-`). 대화 경위와 구현 과정 서술은 넣지 않는다.

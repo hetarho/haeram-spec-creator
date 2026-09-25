@@ -260,7 +260,7 @@ npx haeram-spec-creator work --help
 
 `context --json`은 Git/worktree와 현재 작업 모드를 보여 줍니다. 일반 `board`는 현재 checkout의 파일만 읽는 조회 명령이고, `work board`가 작업 묶음의 기준 커밋과 공유 실행 기록을 함께 보여 줍니다. 보드의 claimable은 조회 시점의 후보이며 선점 자체는 claim이 수행합니다. JSON의 `schemaVersion`은 1입니다.
 
-지원 범위는 같은 로컬 clone입니다. 다른 clone·호스트의 공유 선점, fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 명시적인 어댑터 설정으로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 원격 clone에는 Git 문서와 worker 검증 기록이 남지만 로컬 실행/통합 검증 로그는 전파되지 않습니다.
+지원 범위는 같은 로컬 clone입니다. 다른 clone·호스트의 공유 선점, fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 기본 실행기 또는 command 어댑터로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 원격 clone에는 Git 문서와 worker 검증 기록이 남지만 로컬 실행/통합 검증 로그는 전파되지 않습니다.
 
 설계 배경은 [협업 설계 검토](https://github.com/hetarho/haeram-spec-creator/blob/main/docs/worktree-collaboration-review.md)에 기록합니다.
 
@@ -276,13 +276,17 @@ npx haeram-spec-creator work resume --work feature --owner worker-a --json
 
 수정 요청이 있으면 resume로 먼저 처리합니다. 리뷰 대기가 max-pending에 도달하면 새 배정을 멈춥니다. 태스크 인용줄에 선택 필드 `touches:src/auth/ prisma/schema.prisma`를 적으면 겹치는 영역은 통합/해제될 때까지 직렬화합니다. 생략은 영향 범위가 알려지지 않았다는 뜻입니다. claimable은 보드의 후보 표시이며, 실제 배정은 용량·적체·신선도를 다시 검사합니다.
 
-특정 제품에 종속되지 않는 `work run` 실행기를 제공합니다. 에이전트를 실행하는 어댑터 프로그램을 설정하면 빈 워커 슬롯 보충, 완료 후 검증·리뷰, 수정 재배정, 승인 후 직렬 통합까지 수행합니다.
+`work run`은 설치된 Codex·Claude CLI로 빈 워커 슬롯 보충, 완료 후 검증·리뷰, 수정 재배정, 승인 후 직렬 통합까지 수행합니다. 작업자와 리뷰어의 도구를 다르게 지정할 수 있습니다.
 
 ```bash
-npx haeram-spec-creator work run --work feature --adapter /absolute/path/adapter.json --verify 'npm ci && npm test' --json
+npx haeram-spec-creator work doctor --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --dry-run --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --json
 ```
 
-어댑터는 작업 JSON을 stdin으로 받아 실제 에이전트를 실행하고 결과 JSON을 stdout으로 반환합니다. **모델 실행 도구의 출력 변환을 담당할 어댑터 설정이 필요합니다.** [어댑터 규약과 Orca 연결 방법](skills/manage-work/references/runner.md)에 입력·출력·설정 예와 복구 절차가 있습니다. Orca에서는 이 runner 대신 coordinator가 같은 선점·리뷰 CLI를 호출할 수 있습니다. Orca 전용 자동 연결은 아직 포함하지 않습니다.
+doctor와 dry-run은 모델을 호출하지 않습니다. provider를 생략하면 호환되는 Codex, Claude 순으로 선택하며, reviewer-provider를 생략하면 같은 도구를 사용합니다. 모델은 각 CLI 기본 설정을 사용하거나 `--model`·`--reviewer-model`로 지정합니다. CLI 로그인과 모델 접근 권한은 별도 준비가 필요합니다. 기본 어댑터의 워커는 파일을 편집하고, 호스트가 계약·변경 범위를 검사한 뒤 커밋·검증·제출합니다.
+
+다른 실행기는 `--adapter <json-file>`로 연결할 수 있습니다. [실행 설정과 Orca 연결 방법](skills/manage-work/references/runner.md)에 설정 예·출력 규약·권한·복구 절차가 있습니다. Orca에서는 coordinator가 같은 선점·리뷰 CLI를 호출할 수 있습니다. doctor는 macOS Orca 앱에 포함된 CLI도 찾아 확인하지만 Orca pane/task/dispatch 자동 생성 어댑터는 아직 포함하지 않습니다.
 
 리뷰는 제출 커밋과 상위 기준 커밋에 묶입니다. P1/P2 finding이 있으면 승인할 수 없고, 코드 변경은 재제출, 상위 브랜치 변경은 재리뷰가 필요합니다. 현재는 상위의 무관한 변경도 재리뷰하는 보수적인 정책입니다. 이 리뷰는 기존 review-code의 사용자 채택형 개선 제안과 별도로 동작합니다.
 

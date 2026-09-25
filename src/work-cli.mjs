@@ -1,6 +1,7 @@
 import { inspectWork, startWork, claimWork, claimNextWork, updateWork, releaseWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard, unlockWork } from './work-groups.mjs'
 import { claimReview, finishReview, releaseReview, updateReview, resumeWork } from './work-review.mjs'
 import { runWork, recoverRunner } from './work-runner.mjs'
+import { workDoctor } from './work-providers.mjs'
 import { SkillPackageError } from './errors.mjs'
 
 const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
@@ -12,7 +13,10 @@ const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
   work review-finish --review <id> --result-file <json-file>
   work review-update --review <id>
   work review-release --review <id> [--reason <text>]
-  work run --work <name> --adapter <json-file> --verify <command> [--verify <command> ...]
+  work doctor
+  work run --work <name> [--provider auto|codex|claude | --adapter <json-file>] --verify <command>
+    [--reviewer-provider codex|claude] [--model <id>] [--reviewer-model <id>] [--dry-run]
+    [--timeout-ms <ms>] [--max-dispatches <n>] [--max-task-runs <n>]
   work runner-recover --work <name>
   work status
   work board --work <name>
@@ -36,12 +40,12 @@ const allowed = {
   'claim-next': ['work', 'owner', 'workspace', 'path'], resume: ['work', 'owner', 'attempt'],
   'review-claim': ['work', 'owner', 'attempt'], 'review-finish': ['review', 'result-file'],
   'review-update': ['review'], 'review-release': ['review', 'reason'],
-  run: ['work', 'adapter', 'verify'], 'runner-recover': ['work'],
+  doctor: [], run: ['work', 'adapter', 'verify', 'provider', 'reviewer-provider', 'model', 'reviewer-model', 'timeout-ms', 'max-dispatches', 'max-task-runs'], 'runner-recover': ['work'],
   status: [], board: ['work'], update: ['attempt', 'status', 'reason'],
   submit: ['attempt', 'verify'], integrate: ['attempt', 'verify'], release: ['attempt', 'reason'],
   cleanup: ['attempt'], recover: ['attempt', 'work'], unlock: ['lock-id'],
 }
-const actions = { 'claim-next': claimNextWork, resume: resumeWork, 'review-claim': claimReview, 'review-finish': finishReview,
+const actions = { doctor: workDoctor, 'claim-next': claimNextWork, resume: resumeWork, 'review-claim': claimReview, 'review-finish': finishReview,
   'review-update': updateReview, 'review-release': releaseReview, run: runWork, 'runner-recover': recoverRunner, start: startWork, claim: claimWork, status: inspectWork, board: workBoard,
   update: updateWork, submit: submitWork, integrate: integrateWork, release: releaseWork,
   cleanup: cleanupWork, recover: recoverWork, unlock: unlockWork }
@@ -57,6 +61,7 @@ async function dispatch(args) {
   }
   while (args.length) {
     const argument = args.shift()
+    if (argument === '--dry-run' && action === 'run') { options.dryRun = true; continue }
     if (argument === '--json') { options.json = true; continue }
     const equals = argument.indexOf('=')
     const key = argument.slice(2, equals === -1 ? undefined : equals)

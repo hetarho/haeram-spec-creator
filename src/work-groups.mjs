@@ -68,6 +68,10 @@ async function destination(context, name, requested) {
 
 async function requireClean(root) {
   if (!(await clean(root))) fail('미커밋·미추적 변경이 있습니다. 해당 작업을 먼저 정리하세요.', [root])
+  await requireNoGitOperation(root)
+}
+
+async function requireNoGitOperation(root) {
   for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']) {
     if (await git(root, ['rev-parse', '--verify', '--quiet', marker], [1])) fail(`Git ${marker} 작업이 진행 중입니다.`, [root])
   }
@@ -107,11 +111,13 @@ async function currentTask(context, group, taskId, snapshot) {
   return { commit, task, content: await blob(context.cwd, commit, task.file) }
 }
 
-async function checkWorker(context, group, attempt) {
+async function checkWorker(context, group, attempt, workingTree = false) {
   const workspace = await assertWorkspace(context, attempt)
-  await requireClean(attempt.workspace)
+  if (workingTree) await requireNoGitOperation(attempt.workspace)
+  else await requireClean(attempt.workspace)
   const current = await currentTask(context, group, attempt.taskId)
-  const content = await blob(context.cwd, workspace.git.head, current.task.file)
+  const read = (file) => workingTree ? readFile(path.join(attempt.workspace, file), 'utf8') : blob(context.cwd, workspace.git.head, file)
+  const content = await read(current.task.file)
   if (!content || taskContract(content) !== taskContract(current.content)) fail('태스크 계약이 상위 브랜치와 다릅니다. 기획 변경을 확인하고 작업을 동기화하세요.')
   const acceptance = sections(content).get('acceptance') ?? []
   if (!acceptance.some((row) => /^- \[v\] /.test(row)) || acceptance.some((row) => /^- \[[^v]\]/.test(row))) fail('태스크 acceptance를 실제로 확인하고 모두 [v]로 기록하세요.')
@@ -124,10 +130,11 @@ async function checkWorker(context, group, attempt) {
     const domain = base.split('@')[0]
     const file = `spec/ssot/${domain}.md`
     const canonical = await blob(context.cwd, current.commit, file)
-    if (!canonical || canonical !== await blob(context.cwd, workspace.git.head, file)) fail(`${domain}: 상위 브랜치의 SSOT가 달라졌습니다. 동기화 후 다시 검증하세요.`)
+    if (!canonical || canonical !== await read(file)) fail(`${domain}: 상위 브랜치의 SSOT가 달라졌습니다. 동기화 후 다시 검증하세요.`)
   }
   const common = (await git(context.cwd, ['merge-base', current.commit, workspace.git.head])).trim()
-  const changes = (await git(context.cwd, ['diff', '--name-only', '-z', common, workspace.git.head, '--', 'spec/'])).split('\0').filter(Boolean)
+  const changes = (await git(workingTree ? attempt.workspace : context.cwd, ['diff', '--name-only', '-z', common, ...(workingTree ? [] : [workspace.git.head]), '--', 'spec/'])).split('\0').filter(Boolean)
+  if (workingTree) changes.push(...(await git(attempt.workspace, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'spec/'])).split('\0').filter(Boolean))
   if (changes.some((file) => file !== current.task.file)) fail('워커는 자신의 태스크 외 spec 문서를 변경할 수 없습니다. 기획 공간으로 인계하세요.', changes)
   return { ...current, workerCommit: workspace.git.head }
 }
@@ -350,6 +357,26 @@ async function finishOperation(context, reservation, update) {
     delete attempt.operation
     return attempt
   })
+}
+
+export async function commitWorkerWork(options) {
+  const context = await repository(options)
+  const reservation = await reserve(context, options.attempt, 'committing', ['doing'])
+  try {
+    const current = await checkWorker(context, reservation.group, reservation.attempt, true)
+    if (!options.expectedHead || current.workerCommit !== options.expectedHead) fail('에이전트 실행 중 HEAD가 변경됐습니다. 자동 커밋 전에 확인하세요.')
+    options.signal?.throwIfAborted()
+    if (!(await clean(reservation.attempt.workspace))) {
+      await git(reservation.attempt.workspace, ['add', '--all'])
+      options.signal?.throwIfAborted()
+      await git(reservation.attempt.workspace, ['commit', '-m', `Implement ${reservation.attempt.taskId}`])
+    }
+    await checkWorker(context, reservation.group, reservation.attempt)
+    return await finishOperation(context, reservation, (entry) => Object.assign(entry, { status: 'doing', reason: null }))
+  } catch (error) {
+    await finishOperation(context, reservation, (entry) => Object.assign(entry, { status: 'blocked', reason: error.message }))
+    throw error
+  }
 }
 
 export async function submitWork(options) {
