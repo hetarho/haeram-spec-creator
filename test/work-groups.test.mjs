@@ -6,7 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { startWork, claimWork, claimNextWork, inspectWork, updateWork, releaseWork, commitWorkerWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard } from '../src/work-groups.mjs'
+import { startWork, claimWork, claimNextWork, inspectWork, updateWork, releaseWork, commitWorkerWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard, workHistory, syncWork } from '../src/work-groups.mjs'
 import { claimReview, finishReview, releaseReview, resumeWork } from '../src/work-review.mjs'
 import { runWork, recoverRunner } from '../src/work-runner.mjs'
 import { inspectWorkspace } from '../src/workspace.mjs'
@@ -86,6 +86,11 @@ test('Orca 없이 start→claim→submit→integrate→cleanup하고 dep은 통�
   assert.equal((await git(group.path, 'rev-parse', 'HEAD')).stdout.trim(), integrated.integratedCommit)
   assert.equal((await git(root, 'rev-parse', 'HEAD')).stdout.trim(), setup.initial)
   assert.match(await readFile(path.join(group.path, 'spec/tasks/done/T001.first.md'), 'utf8'), new RegExp(`at: ${setup.sha}`))
+  const progress = JSON.parse(await readFile(path.join(group.path, 'spec/work/feature.json'), 'utf8'))
+  assert.equal(progress.summary.completed, 1)
+  assert.equal(progress.summary.remaining, 2)
+  assert.equal(progress.attempts[0].verifiedCommit, setup.sha)
+  assert.match(await readFile(path.join(group.path, 'spec/STATE.md'), 'utf8'), /\[history\]\(work\/feature.json\)/)
   board = await workBoard({ targetRoot: root, work: group.id })
   assert.equal(board.tasks.find((entry) => entry.id === 'T003').claimable, true)
   const next = await claimWork({ targetRoot: root, work: group.id, task: 'T003' })
@@ -155,6 +160,9 @@ test('해제한 이전 attempt는 새 선점을 갱신하거나 해제할 수 �
   await startWork({ ...setup, name: 'retry' })
   const first = await claimWork({ ...setup, work: 'retry', task: 'T001' })
   await releaseWork({ ...setup, attempt: first.id })
+  const releasedHistory = await workHistory({ ...setup, work: 'retry' })
+  await assert.rejects(updateWork({ ...setup, attempt: first.id, status: 'doing' }), /갱신/)
+  assert.deepEqual(await workHistory({ ...setup, work: 'retry' }), releasedHistory)
   const second = await claimWork({ ...setup, work: 'retry', task: 'T001' })
   assert.notEqual(first.id, second.id)
   await assert.rejects(updateWork({ ...setup, attempt: first.id, status: 'doing' }), /갱신/)
@@ -724,4 +732,121 @@ test('기본 실행기는 미완료 변경이 남은 수정 공간에 새 모델
   assert.equal(result.attempts[0].status, 'blocked')
   assert.match(result.attempts[0].reason, /미커밋/)
   assert.equal(await readFile(path.join(attempt.workspace, 'preserve.txt'), 'utf8'), 'user draft')
+})
+
+test('30개 태스크를 6개 혼합 워커가 처리하고 실행 이력/STATE를 새 clone에도 보존한다', async (t) => {
+  const setup = await fixture(t)
+  await expandTasks(setup, 30)
+  const group = await startWork({ ...setup, name: 'mixed-thirty', workers: 6, maxPending: 12 })
+  const barrier = path.join(setup.temporary, 'first-wave')
+  await mkdir(barrier)
+  const env = await providerStubs(setup, `
+if(job.role==='worker') {
+ fs.writeFileSync(process.env.HAERAM_TEST_BARRIER+'/'+job.slot,job.provider);
+ const started=Date.now();
+ while(fs.readdirSync(process.env.HAERAM_TEST_BARRIER).length<6) {
+  if(Date.now()-started>60000)throw Error('six workers did not start concurrently');
+  await new Promise(resolve=>setTimeout(resolve,20));
+ }
+ const file='spec/tasks/'+fs.readdirSync('spec/tasks').find(name=>name.startsWith(job.taskId+'.'));
+ let text=fs.readFileSync(file,'utf8').replace('- [ ]','- [v]');
+ fs.writeFileSync(file,text.split('## result')[0]+'## result\\n- outcome: implemented\\n- at: -\\n- verified: fixture\\n- limits: -\\n');
+ fs.writeFileSync(job.taskId+'.txt',job.provider);
+}
+const result=job.role==='worker'?{outcome:'completed',summary:job.provider+' implemented '+job.taskId}:{verdict:'approved',summary:'reviewed',findings:[]};
+if(args.includes('--output-last-message'))fs.writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify(result));
+else console.log(JSON.stringify({type:'result',is_error:false,structured_output:result}));
+`)
+  env.HAERAM_TEST_BARRIER = barrier
+  const result = await runWork({ ...setup, work: group.id, providers: 'codex,claude', env, verify: [checkFile('spec/ssot/ARCH.md')] })
+  assert.equal(result.outcome, 'completed', JSON.stringify(result))
+  assert.deepEqual(result.failures, [])
+  assert.equal(result.snapshotError, null)
+  assert.equal(result.summary.completed, 30)
+  assert.equal(result.summary.remaining, 0)
+  const { history } = await workHistory({ ...setup, work: group.id })
+  const launches = history.filter((event) => event.changes.dispatch?.role === 'worker' && event.changes.dispatch.status === 'starting')
+  assert.equal(launches.length, 30)
+  assert.equal(new Set(launches.map((event) => event.taskId)).size, 30)
+  assert.deepEqual([...new Set(launches.map((event) => event.changes.dispatch.slot))].sort(), [1, 2, 3, 4, 5, 6])
+  assert.ok(launches.every((event) => event.changes.dispatch.provider === (event.changes.dispatch.slot % 2 ? 'codex' : 'claude')))
+  const busy = new Set()
+  let peak = 0
+  for (const event of history.filter((event) => event.type === 'attempt')) {
+    if (['preparing', 'doing', 'committing', 'verifying'].includes(event.status)) busy.add(event.attemptId)
+    else busy.delete(event.attemptId)
+    peak = Math.max(peak, busy.size)
+  }
+  assert.equal(peak, 6)
+  const clone = path.join(setup.temporary, 'fresh-clone')
+  await git(setup.root, 'clone', '--branch', group.branch, setup.root, clone)
+  const saved = JSON.parse(await readFile(path.join(clone, 'spec/work/mixed-thirty.json'), 'utf8'))
+  assert.deepEqual(saved.summary, result.summary)
+  assert.ok(saved.attempts.every((entry) => entry.status === 'integrated' && entry.integratedCommit))
+  assert.equal(saved.history.filter((event) => event.status === 'integrated' && event.previousStatus !== 'integrated').length, 30)
+  assert.equal(saved.group.lastRun.outcome, 'completed')
+  const state = await readFile(path.join(clone, 'spec/STATE.md'), 'utf8')
+  assert.match(state, /\| mixed-thirty \| 6 \| 30 \| 30 \| 0 \| 0 \| 0 \| 0 \|/)
+  assert.ok(!state.includes('| T001 |'))
+  assert.equal((await inspectWork({ targetRoot: clone })).attempts.length, 0)
+  const portable = await workHistory({ targetRoot: clone, work: group.id, task: 'T001' })
+  assert.equal(portable.scope, 'snapshot')
+  assert.ok(portable.history.every((entry) => entry.taskId === 'T001'))
+  assert.ok(portable.history.some((entry) => entry.status === 'integrated'))
+})
+
+test('이력은 재배정/blocked를 보존하고 heartbeat는 중복 이벤트를 만들지 않는다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'history' })
+  const first = await claimWork({ ...setup, work: group.id, task: 'T001', owner: 'claude-a' })
+  await updateWork({ ...setup, attempt: first.id, status: 'blocked', reason: 'missing configuration' })
+  const before = await workHistory({ ...setup, work: group.id })
+  await updateWork({ ...setup, attempt: first.id })
+  assert.deepEqual(await workHistory({ ...setup, work: group.id }), before)
+  await releaseWork({ ...setup, attempt: first.id })
+  const second = await claimWork({ ...setup, work: group.id, task: 'T001', owner: 'codex-b' })
+  const saved = await syncWork({ ...setup, work: group.id })
+  assert.equal(saved.candidate, null)
+  assert.ok(!(await git(setup.root, 'worktree', 'list')).stdout.includes('-sync-'))
+  const snapshot = JSON.parse(await readFile(path.join(group.path, saved.file), 'utf8'))
+  assert.equal(snapshot.summary.running, 1)
+  assert.equal(snapshot.attempts.length, 2)
+  assert.deepEqual(snapshot.attempts.map((entry) => entry.owner), ['claude-a', 'codex-b'])
+  const filtered = await workHistory({ ...setup, work: group.id, task: 'T001' })
+  assert.ok(filtered.history.every((entry) => entry.taskId === 'T001'))
+  assert.ok(filtered.history.some((entry) => entry.status === 'blocked' && entry.changes.reason === 'missing configuration'))
+  assert.ok(filtered.history.some((entry) => entry.attemptId === second.id))
+  const dirty = path.join(group.path, 'keep.txt')
+  await writeFile(dirty, 'user draft')
+  const previousHead = (await git(group.path, 'rev-parse', 'HEAD')).stdout
+  await assert.rejects(syncWork({ ...setup, work: group.id }), /진행 기록을 저장하지/)
+  assert.equal(await readFile(dirty, 'utf8'), 'user draft')
+  assert.equal((await git(group.path, 'rev-parse', 'HEAD')).stdout, previousHead)
+  assert.equal((await inspectWork(setup)).groups[0].operation, undefined)
+  const runtime = runtimeRoot(await inspectWorkspace(setup))
+  await transaction(runtime, (state) => { state.groups[group.id].operation = { kind: 'sync', token: 'stopped-sync', pid: process.pid, host: os.hostname(), candidate: 'preserved' } })
+  await assert.rejects(recoverWork({ ...setup, work: group.id }), /실행 중/)
+  await transaction(runtime, (state) => { state.groups[group.id].operation.pid = 2147483647 })
+  const recovered = await recoverWork({ ...setup, work: group.id })
+  assert.equal(recovered.operation, undefined)
+  assert.equal(recovered.recoveredSync.candidate, 'preserved')
+})
+
+test('새 clone에서도 저장된 묶음 이름과 다른 묶음의 STATE 기록을 보존한다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'kept' })
+  await syncWork({ ...setup, work: group.id })
+  const clone = path.join(setup.temporary, 'clone-with-history')
+  await git(setup.root, 'clone', '--branch', group.branch, setup.root, clone)
+  for (const [key, value] of [['user.name', 'Test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false'], ['core.hooksPath', path.join(setup.temporary, 'no-hooks')]]) await git(clone, 'config', key, value)
+  const old = await readFile(path.join(clone, 'spec/work/kept.json'), 'utf8')
+  await assert.rejects(startWork({ targetRoot: clone, name: 'kept' }), /이력이 이미 저장/)
+  assert.equal((await inspectWork({ targetRoot: clone })).groups.length, 0)
+  const next = await startWork({ targetRoot: clone, name: 'next-group' })
+  await syncWork({ targetRoot: clone, work: next.id })
+  assert.equal(await readFile(path.join(next.path, 'spec/work/kept.json'), 'utf8'), old)
+  const state = await readFile(path.join(next.path, 'spec/STATE.md'), 'utf8')
+  assert.equal(state.match(/^## work$/gm).length, 1)
+  assert.equal(state.match(/^\| kept \|/gm).length, 1)
+  assert.equal(state.match(/^\| next-group \|/gm).length, 1)
 })

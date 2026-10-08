@@ -22,6 +22,7 @@ const requiredCoreFiles = [
   'bin/haeram-agent-adapter.mjs',
   'src/agent-adapter.mjs',
   'src/work-providers.mjs',
+  'src/work-progress.mjs',
   'src/index.mjs',
   'package.json',
   'README.md',

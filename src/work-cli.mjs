@@ -1,4 +1,4 @@
-import { inspectWork, startWork, claimWork, claimNextWork, updateWork, releaseWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard, unlockWork } from './work-groups.mjs'
+import { inspectWork, startWork, claimWork, claimNextWork, updateWork, releaseWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard, workHistory, syncWork, unlockWork } from './work-groups.mjs'
 import { claimReview, finishReview, releaseReview, updateReview, resumeWork } from './work-review.mjs'
 import { runWork, recoverRunner } from './work-runner.mjs'
 import { workDoctor } from './work-providers.mjs'
@@ -14,12 +14,14 @@ const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
   work review-update --review <id>
   work review-release --review <id> [--reason <text>]
   work doctor
-  work run --work <name> [--provider auto|codex|claude | --adapter <json-file>] --verify <command>
+  work run --work <name> [--provider auto|codex|claude | --providers codex,claude | --adapter <json-file>] --verify <command>
     [--reviewer-provider codex|claude] [--model <id>] [--reviewer-model <id>] [--dry-run]
     [--timeout-ms <ms>] [--max-dispatches <n>] [--max-task-runs <n>]
   work runner-recover --work <name>
   work status
   work board --work <name>
+  work history --work <name> [--task <T###>]
+  work sync --work <name>
   work update --attempt <id> [--status doing|blocked] [--reason <text>]
   work submit --attempt <id> --verify <command> [--verify <command> ...]
   work integrate --attempt <id> --verify <command> [--verify <command> ...]
@@ -40,14 +42,15 @@ const allowed = {
   'claim-next': ['work', 'owner', 'workspace', 'path'], resume: ['work', 'owner', 'attempt'],
   'review-claim': ['work', 'owner', 'attempt'], 'review-finish': ['review', 'result-file'],
   'review-update': ['review'], 'review-release': ['review', 'reason'],
-  doctor: [], run: ['work', 'adapter', 'verify', 'provider', 'reviewer-provider', 'model', 'reviewer-model', 'timeout-ms', 'max-dispatches', 'max-task-runs'], 'runner-recover': ['work'],
+  doctor: [], run: ['work', 'adapter', 'verify', 'provider', 'providers', 'reviewer-provider', 'model', 'reviewer-model', 'timeout-ms', 'max-dispatches', 'max-task-runs'], 'runner-recover': ['work'],
+  history: ['work', 'task'], sync: ['work'],
   status: [], board: ['work'], update: ['attempt', 'status', 'reason'],
   submit: ['attempt', 'verify'], integrate: ['attempt', 'verify'], release: ['attempt', 'reason'],
   cleanup: ['attempt'], recover: ['attempt', 'work'], unlock: ['lock-id'],
 }
 const actions = { doctor: workDoctor, 'claim-next': claimNextWork, resume: resumeWork, 'review-claim': claimReview, 'review-finish': finishReview,
   'review-update': updateReview, 'review-release': releaseReview, run: runWork, 'runner-recover': recoverRunner, start: startWork, claim: claimWork, status: inspectWork, board: workBoard,
-  update: updateWork, submit: submitWork, integrate: integrateWork, release: releaseWork,
+  history: workHistory, sync: syncWork, update: updateWork, submit: submitWork, integrate: integrateWork, release: releaseWork,
   cleanup: cleanupWork, recover: recoverWork, unlock: unlockWork }
 
 async function dispatch(args) {

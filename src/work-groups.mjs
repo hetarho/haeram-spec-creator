@@ -11,6 +11,7 @@ import { quoteLine, quoteFields, sections, splitRefs, TASK_ID } from './spec-for
 import { runtimeRoot, readRuntime, transaction, readLock, unlockRuntime, canonicalDestination } from './work-runtime.mjs'
 import { SkillPackageError } from './errors.mjs'
 import { lintSpec } from './spec-lint.mjs'
+import { progressSnapshot, progressState, workSummary } from './work-progress.mjs'
 
 const execute = promisify(exec)
 import { activeAttempt as active, workerBusy, pendingReview, workLimits, invalidateReview, overlaps, rankedTasks } from './work-policy.mjs'
@@ -190,6 +191,7 @@ export async function startWork(options) {
   const baseRef = adopted ? null : options.base ?? context.workspace.git.branch
   if (!adopted && !baseRef) fail('분기 기준을 --base로 지정하세요.')
   const baseCommit = await head(context.cwd, baseRef ?? 'HEAD')
+  if (await blob(context.cwd, baseCommit, `spec/work/${options.name}.json`) !== null) fail('같은 이름의 작업 묶음 이력이 이미 저장돼 있습니다. 이력을 보존하려면 새 이름으로 시작하세요.')
   // Avoid silently omitting the user's uncommitted planning documents.
   await requireClean(context.cwd)
   const target = adopted ? context.cwd : await destination(context, `${options.name}-plan`, options.path)
@@ -454,9 +456,12 @@ export async function integrateWork(options) {
     await git(context.cwd, ['worktree', 'add', '--detach', candidate, current.commit])
     await git(candidate, ['merge', '--no-ff', '--no-commit', attempt.verifiedCommit])
     await archiveTask(candidate, current.task, attempt.verifiedCommit, attempt.verification)
+    const progress = await readRuntime(context.root)
+    Object.assign(progress.attempts[attempt.id], { status: 'integrated', reason: null })
+    const historyFile = await writeProgress(candidate, group, progress, current.commit)
     const spec = await lintSpec({ targetRoot: candidate })
     if (!spec.ok || spec.warnings.length) fail('통합 후보의 spec 검증에 실패했습니다.', [...spec.errors, ...spec.warnings])
-    await git(candidate, ['add', '--', 'spec/STATE.md', current.task.file, `spec/tasks/done/${path.basename(current.task.file)}`])
+    await git(candidate, ['add', '--', 'spec/STATE.md', historyFile, current.task.file, `spec/tasks/done/${path.basename(current.task.file)}`])
     await git(candidate, ['commit', '-m', `Integrate ${attempt.taskId} into ${group.id}`])
     const candidateCommit = await head(candidate)
     const verification = await verify(candidate, checks, candidateCommit, options.signal)
@@ -494,6 +499,16 @@ export async function recoverWork(options) {
   if (options.work) {
     if (options.attempt) fail('복구 대상은 --work 또는 --attempt 중 하나만 지정하세요.')
     const group = Object.hasOwn(state.groups, options.work) ? state.groups[options.work] : null
+    if (group?.status === 'active' && group.operation?.kind === 'sync') {
+      requireStopped(group.operation)
+      return transaction(context.root, (current) => {
+        const entry = current.groups[group.id]
+        if (entry.operation?.token !== group.operation.token) fail('복구 중 sync 소유권이 변경됐습니다.')
+        entry.recoveredSync = { ...entry.operation, recoveredAt: now() }
+        delete entry.operation
+        return entry
+      })
+    }
     if (!group || !['preparing', 'failed'].includes(group.status)) fail('복구할 작업 묶음 생성 기록이 없습니다.')
     if (group.status === 'preparing') requireStopped(group.creator)
     const workspace = await inspectWorkspace({ targetRoot: group.path })
@@ -575,7 +590,95 @@ export async function workBoard(options) {
     task.runtimeStatus = attempt?.status ?? null
   }
   return { ...board, scope: 'work', group, limits: workLimits(group.limits), attempts: attempts.filter((entry) => entry.group === group.id),
+    summary: workSummary(board, attempts.filter((entry) => entry.group === group.id)),
     queues: Object.fromEntries(['doing', 'ready', 'reviewing', 'approved', 'changes_requested', 'blocked'].map((status) => [status, attempts.filter((entry) => entry.group === group.id && entry.status === status).map((entry) => entry.id)])) }
+}
+
+export async function workHistory(options) {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(options.work ?? '') || options.work.length > 60) fail('이력을 조회할 작업 묶음 이름이 필요합니다.')
+  if (options.task && !TASK_ID.test(options.task)) fail('이력을 조회할 태스크 ID는 T### 형식이어야 합니다.')
+  const context = await repository(options)
+  const state = await readRuntime(context.root)
+  const group = Object.hasOwn(state.groups, options.work) ? state.groups[options.work] : null
+  let history, snapshotAt = null
+  if (group) history = (state.history ?? []).filter((entry) => entry.group === group.id)
+  else {
+    let snapshot
+    try { snapshot = JSON.parse(await readFile(path.join(context.cwd, 'spec/work', `${options.work}.json`), 'utf8')) } catch (error) {
+      fail('작업 묶음의 실행 기록 또는 저장된 이력을 찾을 수 없습니다.', [error.message])
+    }
+    if (snapshot?.schemaVersion !== 1 || snapshot.group?.id !== options.work || !Array.isArray(snapshot.history)) fail('저장된 작업 이력 형식이 올바르지 않습니다.')
+    history = snapshot.history
+    snapshotAt = snapshot.snapshotAt
+  }
+  return { schemaVersion: 1, work: options.work, scope: group ? 'runtime' : 'snapshot', snapshotAt, task: options.task ?? null,
+    history: history.filter((entry) => !options.task || entry.taskId === options.task) }
+}
+
+async function writeProgress(root, group, state, sourceCommit) {
+  const board = await readTaskBoard({ targetRoot: root })
+  if (!board.ok || board.warnings.length) fail('진행 기록을 저장할 태스크/STATE가 올바르지 않습니다.', [...board.errors, ...board.warnings])
+  board.commit = sourceCommit
+  const snapshot = progressSnapshot(state.groups[group.id], board, state)
+  const file = `spec/work/${group.id}.json`
+  await mkdir(path.join(root, 'spec/work'), { recursive: true })
+  await writeFile(path.join(root, file), `${JSON.stringify(snapshot, null, 2)}\n`)
+  const stateFile = path.join(root, 'spec/STATE.md')
+  await writeFile(stateFile, progressState(await readFile(stateFile, 'utf8'), snapshot, `work/${group.id}.json`))
+  return file
+}
+
+// Export a checkpoint through an isolated candidate, just like task integration.
+// Workers never write STATE, and a dirty planning checkout is never overwritten.
+export async function syncWork(options) {
+  const context = await repository(options)
+  const token = randomUUID()
+  const group = await transaction(context.root, (state) => {
+    const entry = groupOf(state, options.work)
+    noOperation(entry)
+    if (entry.runner) fail('runner 실행 중에는 수동 sync를 할 수 없습니다. 실행기가 종료 시 기록을 저장합니다.')
+    if (Object.values(state.attempts).some((attempt) => attempt.group === entry.id && attempt.operation)) fail('태스크 명령이 실행 중입니다. 종료 후 sync하세요.')
+    entry.operation = { token, kind: 'sync', ...creator(), startedAt: now() }
+    return structuredClone(entry)
+  })
+  let candidate
+  try {
+    await assertWorkspace(context, group)
+    await requireClean(group.path)
+    const commit = await head(group.path)
+    candidate = await destination(context, `${group.id}-sync-${token.slice(0, 8)}`)
+    await transaction(context.root, (state) => {
+      const entry = groupOf(state, group.id)
+      if (entry.operation?.token !== token) fail('sync 소유권이 변경됐습니다.')
+      Object.assign(entry.operation, { candidate, sourceCommit: commit })
+    })
+    await git(context.cwd, ['worktree', 'add', '--detach', candidate, commit])
+    const file = await writeProgress(candidate, group, await readRuntime(context.root), commit)
+    const spec = await lintSpec({ targetRoot: candidate })
+    if (!spec.ok || spec.warnings.length) fail('진행 기록 후보의 spec 검증에 실패했습니다.', [...spec.errors, ...spec.warnings])
+    await git(candidate, ['add', '--', 'spec/STATE.md', file])
+    await git(candidate, ['commit', '-m', `Save progress for ${group.id}`])
+    const savedCommit = await head(candidate)
+    await transaction(context.root, (state) => {
+      const entry = groupOf(state, group.id)
+      if (entry.operation?.token !== token) fail('sync 소유권이 변경됐습니다.')
+      entry.operation.savedCommit = savedCommit
+    })
+    await assertWorkspace(context, group)
+    await requireClean(group.path)
+    if (await head(group.path) !== commit) fail('진행 기록 저장 중 상위 브랜치가 변경됐습니다. 다시 sync하세요.')
+    await git(group.path, ['merge', '--ff-only', savedCommit])
+    // The saved commit now lives on the group branch; only a failed sync keeps its candidate.
+    const removed = await git(context.cwd, ['worktree', 'remove', candidate]).then(() => true, () => false)
+    return { schemaVersion: 1, work: group.id, commit: savedCommit, file, candidate: removed ? null : candidate }
+  } catch (error) {
+    throw new SkillPackageError('진행 기록을 저장하지 못했습니다. 원본과 후보를 보존했습니다.', [candidate ?? '(후보 생성 전)', error.message, ...(error.details ?? [])])
+  } finally {
+    await transaction(context.root, (state) => {
+      const entry = groupOf(state, group.id)
+      if (entry.operation?.token === token) delete entry.operation
+    })
+  }
 }
 
 export async function unlockWork(options) {

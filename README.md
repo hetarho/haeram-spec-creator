@@ -238,7 +238,7 @@ npx haeram-spec-creator work cleanup --attempt "$ATTEMPT_ID" --json
 
 상태 흐름은 `doing → ready → reviewing → approved → integrated`입니다. 수정 요청은 `changes_requested → doing → ready`로 재검증·재리뷰합니다. `ready`는 워커 검증을 마친 리뷰 대기 상태이고, `integrated`가 되어야 태스크 파일이 `done/`으로 이동하고 후속 의존성이 열립니다. main 반영·PR·원격 push는 프로젝트의 기존 흐름을 따릅니다. CLI는 로컬 작업 브랜치까지만 통합하며 원격에 push하지 않습니다.
 
-진행 중 기록은 `<git-common-dir>/haeram/v1/state.json`에 저장됩니다. 같은 clone의 worktree들이 공유하고 Git에 커밋하지 않습니다. CLI는 원자적 예약으로 동일 태스크 및 동일 작업 공간의 이중 배정을 막습니다. 워커는 STATE·SSOT를 바꾸지 않으며, 기획 변경·채번은 하나의 기획 공간에서 진행합니다. 공유 상태를 전달하려고 STATE를 cherry-pick할 필요가 없습니다.
+진행 중 기록과 상태 변화 이력은 `<git-common-dir>/haeram/v1/state.json`에 저장됩니다. 같은 clone의 worktree들이 공유하고 runtime 자체는 Git에 커밋하지 않습니다. 태스크 통합과 실행기 종료 시 `spec/work/<묶음>.json` 상세 기록 및 `STATE.md`의 작업 묶음 요약을 Git에 저장합니다. CLI는 원자적 예약으로 동일 태스크 및 동일 작업 공간의 이중 배정을 막습니다. 워커는 STATE·SSOT를 바꾸지 않으며, 기획 변경·채번은 하나의 기획 공간에서 진행합니다.
 
 검증 명령은 사용자가 지정한 `--verify`를 셸에서 순서대로 실행합니다(여러 번 지정 가능, 명령별 15분 제한). ARCH에 정의된 실제 검사와 필요한 환경 준비를 넣어야 합니다. 워커 HEAD가 변경되거나 검사가 미커밋 변경을 만들면 제출이 실패합니다. 통합은 별도 후보에서 수행하며, 충돌·검증 실패·상위 브랜치 이동이 있으면 후보를 보존합니다. 검증은 지정한 명령의 성공을 보장하며, 어떤 테스트가 충분한지는 프로젝트의 acceptance/ARCH가 정합니다.
 
@@ -260,7 +260,7 @@ npx haeram-spec-creator work --help
 
 `context --json`은 Git/worktree와 현재 작업 모드를 보여 줍니다. 일반 `board`는 현재 checkout의 파일만 읽는 조회 명령이고, `work board`가 작업 묶음의 기준 커밋과 공유 실행 기록을 함께 보여 줍니다. 보드의 claimable은 조회 시점의 후보이며 선점 자체는 claim이 수행합니다. JSON의 `schemaVersion`은 1입니다.
 
-지원 범위는 같은 로컬 clone입니다. 다른 clone·호스트의 공유 선점, fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 기본 실행기 또는 command 어댑터로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 원격 clone에는 Git 문서와 worker 검증 기록이 남지만 로컬 실행/통합 검증 로그는 전파되지 않습니다.
+지원 범위는 같은 로컬 clone입니다. 다른 clone·호스트의 공유 선점, fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 기본 실행기 또는 command 어댑터로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 다른 clone에도 Git에 저장된 태스크·실행 이력 체크포인트가 남지만 현재 프로세스·선점 소유권과 명령 출력 로그는 전파되지 않습니다.
 
 설계 배경은 [협업 설계 검토](https://github.com/hetarho/haeram-spec-creator/blob/main/docs/worktree-collaboration-review.md)에 기록합니다.
 
@@ -287,6 +287,29 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 doctor와 dry-run은 모델을 호출하지 않습니다. provider를 생략하면 호환되는 Codex, Claude 순으로 선택하며, reviewer-provider를 생략하면 같은 도구를 사용합니다. 모델은 각 CLI 기본 설정을 사용하거나 `--model`·`--reviewer-model`로 지정합니다. CLI 로그인과 모델 접근 권한은 별도 준비가 필요합니다. 기본 어댑터의 워커는 파일을 편집하고, 호스트가 계약·변경 범위를 검사한 뒤 커밋·검증·제출합니다.
 
 다른 실행기는 `--adapter <json-file>`로 연결할 수 있습니다. [실행 설정과 Orca 연결 방법](skills/manage-work/references/runner.md)에 설정 예·출력 규약·권한·복구 절차가 있습니다. Orca에서는 coordinator가 같은 선점·리뷰 CLI를 호출할 수 있습니다. doctor는 macOS Orca 앱에 포함된 CLI도 찾아 확인하지만 Orca pane/task/dispatch 자동 생성 어댑터는 아직 포함하지 않습니다.
+
+### 태스크 30개를 워커 6개로 실행하기
+
+```sh
+npx haeram-spec-creator work start feature --workers 6 --reviewers 1 --max-pending 12 --json
+# Claude만 실행하려면 --provider claude, Codex만 실행하려면 --provider codex
+npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm test' --json
+```
+
+혼합 목록은 슬롯에 반복 배정합니다. `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개와 Claude 4개가 됩니다. 모델을 생략하면 각 CLI의 설정을 사용하며, 도구별 모델은 [adapter workers 설정](skills/manage-work/references/runner.md#단일-도구와-혼합-워커)에 지정합니다. 리뷰어는 워커 6개와 별도로 실행됩니다.
+
+태스크를 미리 5개씩 묶지 않고 빈 슬롯이 다음 가능한 태스크를 가져갑니다. 작업 시간 차이로 일부 슬롯이 더 많은 일을 처리할 수 있고, 의존성·예상 변경 경로·리뷰 적체 때문에 동시 실행 수가 줄어들 수 있습니다.
+
+```sh
+npx haeram-spec-creator work board --work feature --json
+npx haeram-spec-creator work history --work feature --task T001 --json
+# 수동으로 실행했다면 작업 명령이 멈춘 체크포인트에서 Git에 저장
+npx haeram-spec-creator work sync --work feature --json
+```
+
+보드의 `summary`는 총량·완료·남은 일·실행·리뷰·blocked 수를 보여 줍니다. STATE의 선택적 `## work` 표는 같은 요약과 상세 JSON 링크를 저장합니다. 완료 태스크의 acceptance·검증 근거는 `tasks/done/`, 배정·실행 도구·수정 요청·재시도 이력은 `spec/work/feature.json`에 남습니다. STATE는 마지막 저장 시점의 체크포인트이고 실행 중 최신 상태는 보드에서 확인합니다.
+
+실행기는 통합할 때마다 기록을 저장하고 정상 완료·한도 도달·처리한 종료 신호 뒤 최종 기록을 커밋합니다. 저장에 실패하면 결과의 `snapshotError`와 `failures`에 원인을 남깁니다. 미커밋 기획 변경을 정리한 뒤 `work sync`로 다시 저장할 수 있습니다. 실행 중 수동 sync는 거부하며, 기준 브랜치가 이동하면 이전 리뷰 승인은 재리뷰가 필요할 수 있습니다. 새 clone에서도 `work history`로 저장된 이력을 조회할 수 있지만 과거 워커의 실행 권한을 복원하지는 않습니다.
 
 리뷰는 제출 커밋과 상위 기준 커밋에 묶입니다. P1/P2 finding이 있으면 승인할 수 없고, 코드 변경은 재제출, 상위 브랜치 변경은 재리뷰가 필요합니다. 현재는 상위의 무관한 변경도 재리뷰하는 보수적인 정책입니다. 이 리뷰는 기존 review-code의 사용자 채택형 개선 제안과 별도로 동작합니다.
 

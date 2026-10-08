@@ -17,6 +17,31 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 
 `--provider auto`가 기본이며 호환되는 Codex, Claude 순으로 선택한다. Orca 설치 여부로 실행 방식을 바꾸지 않는다. reviewer-provider를 생략하면 worker와 같은 도구를 사용한다. `--model`·`--reviewer-model`을 생략하면 각 CLI의 설정을 사용한다. 같은 도구의 리뷰어는 명시한 worker 모델을 상속하고, 다른 도구의 리뷰어는 모델을 따로 지정하지 않으면 그 CLI 기본값을 사용한다. 임의로 모델을 추정하거나 설치·로그인하지 않는다.
 
+### 단일 도구와 혼합 워커
+
+```sh
+npx haeram-spec-creator work start feature --workers 6 --reviewers 1 --max-pending 12 --json
+# Codex만: --provider codex, Claude만: --provider claude
+npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm test' --json
+```
+
+providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개·Claude 4개다. 워커 6개에 리뷰어는 별도다. 각 슬롯은 태스크 완료 뒤 다음 의존성 충족 태스크를 가져간다. 태스크 30개를 꼭 5개씩 고정 분배하지 않으며, dep·touches·리뷰 적체가 있으면 실제 동시 실행 수는 줄어든다.
+
+각 도구의 모델을 지정하려면 adapter 파일을 사용한다. workers 배열 역시 슬롯에 순환 배정한다.
+
+```json
+{
+  "workers": [
+    { "provider": "codex", "model": "<codex-model>" },
+    { "provider": "claude", "model": "<claude-model>" }
+  ],
+  "reviewerProvider": "claude",
+  "reviewerModel": "<review-model>"
+}
+```
+
+모델을 생략하면 해당 CLI 설정을 사용한다. 혼합 실행에서는 리뷰어 모델을 워커에서 상속하지 않고, reviewerProvider를 생략하면 목록의 첫 도구를 사용한다. `--provider`와 `--providers`는 함께 지정하지 않는다. 혼합 실행의 `--model`은 거부하며 adapter의 각 workers 항목에 지정한다. `--adapter`와 provider/model CLI 옵션도 함께 지정하지 않는다.
+
 기본 어댑터는 배포된 implement-task/review-task 본문과 배정 정보를 매 실행에 전달한다. Codex는 worker에 workspace-write, reviewer에 read-only sandbox를 지정하고 JSON schema와 최종 결과 파일을 사용한다. Claude는 worker에 acceptEdits, reviewer에 plan 권한 모드와 역할별 도구 목록을 지정하고 structured_output을 읽는다. 기존 인증·권한 정책을 사용하며 권한을 건너뛰는 옵션은 사용하지 않는다. Claude의 shell 검사 등 허용되지 않은 명령은 사전에 프로젝트 정책에 맞게 설정하거나 blocked로 인계한다. 호스트의 `--verify` 명령은 별도로 실행된다. CLI 출력 형식이 맞지 않거나 종료 코드가 실패면 완료로 취급하지 않는다. 규약 근거: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive/), [Claude headless 실행](https://code.claude.com/docs/en/headless).
 
 기본 어댑터의 워커는 코드와 자신의 태스크만 편집하고 커밋하지 않는다. 호스트가 시작 시 깨끗한 작업 공간과 HEAD를 기록하고, 종료 시 acceptance·계약·SSOT·spec 변경 범위를 검사한 뒤 커밋한다(`committing`). 이어 검증·제출한다. 예상 밖 HEAD 변경이나 계약 위반은 blocked로 남기며 변경을 되돌리지 않는다. sandbox의 공용 Git 디렉토리 쓰기 권한을 넓히지 않아도 된다.
@@ -59,6 +84,16 @@ stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 �
 runner는 빈 슬롯을 채우고 수정 요청을 우선 배정하며 리뷰 대기열을 처리한다. 대기 중 모델 호출은 하지 않는다. 살아 있는 자식 프로세스의 heartbeat는 10초마다 기록하지만 에이전트의 의미 있는 진행을 보장하지는 않는다. 장시간 작업자는 board를 다시 읽고 정책 변경을 판단해야 한다.
 
 완료 시 `outcome:completed`. 더 진행할 수 없으면 `needs-attention`과 남은 작업을 반환한다. 횟수 한도는 `dispatch-limit`, 종료 신호/heartbeat 실패는 `interrupted`. maxTaskRuns는 한 번의 run 안에서 태스크별·역할별 최대 실행 횟수이며 재실행 전에 반복 실패 원인을 확인한다. 자동 통합 실패는 같은 run에서 무한 재시도하지 않는다.
+
+### 진행 저장
+
+runtime은 상태와 이력을 한 번의 원자적 교체로 저장한다. heartbeat는 이력을 늘리지 않는다. `work history --work feature --task T001 --json`은 태스크의 배정·도구·슬롯·실행·리뷰·재시도 변화를 보여준다. `work board`의 summary는 총량·완료·남은 일·실행·리뷰·blocked 수를 반환한다.
+
+태스크가 통합될 때마다 STATE의 `## work` 요약과 `spec/work/feature.json`을 함께 저장하고, runner는 정상 완료·한도 도달·처리한 종료 신호 후 마지막 기록을 커밋한다. 상세 JSON에는 전체 이력, 워커별 도구/모델, 제출·리뷰·완료 commit 근거가 남는다. 명령 출력·PID·workspace 절대 경로·heartbeat는 문서에 내보내지 않는다. 저장 파일의 sourceCommit은 체크포인트를 만든 기준 커밋이며 파일 자신이 포함된 커밋의 SHA가 아니다. 통합 후보에는 적용 후 상태를 기록하므로 해당 태스크의 최종 integratedCommit과 통합 검사 시각은 다음 체크포인트에서 보충된다.
+
+실시간 배정의 정본은 runtime이고 STATE는 체크포인트다. 수동 실행은 `work sync --work feature --json`으로 저장한다. sync는 기준 브랜치를 이동하므로 진행 중 리뷰의 승인은 재리뷰가 필요할 수 있다. runner 실행 중 수동 sync는 거부한다. 미커밋 기획 변경이 있으면 원본을 보존하며 저장 실패를 반환한다. runner 결과의 snapshotError와 failures를 확인하고 원인을 해결한 뒤 sync한다. 강제 종료로 runner의 종료 처리가 실행되지 않았다면 기존 복구 절차로 runner·워커 종료를 확인한 뒤 sync한다. 중단된 sync 예약은 프로세스 종료 확인 후 `work recover --work feature`로 해제한다.
+
+Git에 저장된 체크포인트는 다른 clone에도 남는다. runtime이 없는 새 clone의 `work history`는 저장된 JSON을 읽고 scope:snapshot을 반환한다. 실행 소유권을 복원하거나 과거 워커를 자동 재개하지 않는다. 기록이 이미 있는 묶음 이름은 새 clone에서도 start로 재사용할 수 없으며 새 이름으로 시작해 과거 이력을 보존한다.
 
 ## Orca 또는 다른 coordinator
 

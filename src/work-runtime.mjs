@@ -3,9 +3,10 @@ import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { SkillPackageError } from './errors.mjs'
+import { recordProgress } from './work-progress.mjs'
 
 export const runtimeRoot = (workspace) => path.join(workspace.git.commonDir, 'haeram', 'v1')
-const empty = () => ({ schemaVersion: 1, groups: {}, attempts: {} })
+const empty = () => ({ schemaVersion: 1, groups: {}, attempts: {}, history: [] })
 
 export async function readRuntime(root) {
   let text
@@ -20,6 +21,7 @@ export async function readRuntime(root) {
   if (state?.schemaVersion !== 1 || !state.groups || !state.attempts || typeof state.groups !== 'object' || typeof state.attempts !== 'object' || Array.isArray(state.groups) || Array.isArray(state.attempts)) {
     throw new SkillPackageError('지원하지 않는 작업 기록 형식입니다.', [root])
   }
+  if (state.history !== undefined && !Array.isArray(state.history)) throw new SkillPackageError('작업 이력 형식이 올바르지 않습니다.', [root])
   return state
 }
 
@@ -60,7 +62,9 @@ export async function transaction(root, update) {
   try {
     await writeFile(path.join(lock, 'owner.json'), JSON.stringify(owner), { flag: 'wx' })
     const state = await readRuntime(root)
+    const previous = structuredClone(state)
     const result = await update(state)
+    recordProgress(previous, state)
     temporary = path.join(root, `state.${owner.id}.tmp`)
     await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: 'wx' })
     await rename(temporary, path.join(root, 'state.json'))

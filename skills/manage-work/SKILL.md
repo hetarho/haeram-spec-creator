@@ -56,3 +56,5 @@ description: >-
 - 여러 태스크를 계속 처리하도록 요청받았으면 [실행기 연결](references/runner.md)을 읽는다. `work doctor`와 `work run --dry-run`으로 도구·역할·한도를 확인한다. `work run`은 기본 Codex/Claude 또는 command 어댑터를 사용해 워커 보충, 수정 우선 재배정, 리뷰, 직렬 통합을 진행한다. 실제 실행 전 검증 명령을 지정하고, 검사·미리보기만으로 에이전트를 실행했다고 보고하지 않는다.
 - Orca에서는 같은 CLI의 선점·리뷰 프로토콜을 사용하고 실행/완료 알림은 Orca가 맡게 할 수 있다. Orca coordinator와 로컬 runner가 같은 워커 슬롯을 동시에 관리하지 않게 한다.
 - STATE next는 사람의 재개 안내 1~3줄이다. 에이전트별 배정은 runtime, 작업 목록은 상위 브랜치 태스크가 기준이다. 빈 작업 슬롯은 의존성이나 리뷰 적체 때문에 정상일 수 있다.
+- 단일 도구는 `work run --provider codex|claude`, 혼합은 `--providers codex,claude`. 목록은 worker 슬롯에 순환 배정하며 수는 start의 `--workers`로 정한다. 예를 들어 workers=6이면 두 도구가 3개씩 실행된다. 태스크는 미리 5개씩 고정 배분하지 않고 빈 슬롯이 다음 가능한 일을 가져간다. 도구별 모델은 [runner 설정](references/runner.md)의 workers 배열로 지정한다.
+- 실행 변화는 runtime 이력에 계속 누적된다. `work history --work <slug> [--task T###]`로 배정·실행·수정·완료 경위를 확인한다. 태스크 통합과 runner 종료 시 `spec/work/<slug>.json` 상세 기록과 STATE의 선택적 work 요약 표가 묶음 브랜치에 커밋된다. 실행 중 최신 상태는 `work board --work <slug>`로 확인한다. 수동 실행은 작업 명령이 멈춘 체크포인트에서 `work sync --work <slug>`로 저장한다. 워커가 STATE를 직접 쓰지 않는다.

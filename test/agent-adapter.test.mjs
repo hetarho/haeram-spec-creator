@@ -74,3 +74,21 @@ test('오류 코드가 있으면 남아 있는 결과 파일로 성공을 만들
   const fixture = await stub(t, 'codex', `const fs=require('node:fs');const args=process.argv;fs.writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({outcome:'completed',summary:'stale'}));process.exit(7);`)
   await assert.rejects(executeAgentAdapter({ provider: 'codex', job: job(fixture.root), env: fixture.env, log: () => {} }), /실행 실패/)
 })
+
+test('단일/혼합 워커와 모델별 설정을 지원하고 모호한 설정은 실행 전에 거부한다', async (t) => {
+  const fixture = await stub(t, 'codex', `if(process.argv.includes('--version'))console.log('test');else console.log('--sandbox --output-schema --output-last-message --json');`)
+  await writeFile(path.join(fixture.root, 'claude'), `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('test');else console.log('--print --output-format --json-schema --permission-mode --allowedTools --tools --permission-prompts');`, { mode: 0o755 })
+  const options = { targetRoot: fixture.root, env: fixture.env }
+  const mixed = await builtInAdapter({ ...options, providers: 'codex,claude,claude' })
+  assert.deepEqual(mixed.workers.map((entry) => entry.provider), ['codex', 'claude', 'claude'])
+  assert.equal(mixed.roles.reviewer.provider, 'codex')
+  const individual = await builtInAdapter({ ...options, provider: 'claude', model: 'claude-model' })
+  assert.equal(individual.workers[0].provider, 'claude')
+  assert.equal(individual.roles.reviewer.model, 'claude-model')
+  const configured = await builtInAdapter({ ...options, workers: [{ provider: 'claude', model: 'claude-model' }, { provider: 'codex', model: 'codex-model' }], reviewerProvider: 'codex' })
+  assert.deepEqual(configured.workers.map((entry) => entry.model), ['claude-model', 'codex-model'])
+  assert.equal(configured.roles.reviewer.model, null)
+  for (const invalid of [{ providers: '' }, { providers: 'claude,unknown' }, { providers: 'codex,claude', provider: 'codex' }, { providers: 'codex,claude', model: 'ambiguous' }, { workers: [] }, { workers: [{ provider: 'codex', model: '' }] }]) {
+    await assert.rejects(builtInAdapter({ ...options, ...invalid }))
+  }
+})
