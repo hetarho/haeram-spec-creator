@@ -6,7 +6,8 @@ import path from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { startWork, claimWork, claimNextWork, inspectWork, updateWork, releaseWork, commitWorkerWork, submitWork, integrateWork, cleanupWork, recoverWork, workBoard, workHistory, syncWork } from '../src/work-groups.mjs'
+import { startWork, claimWork, claimNextWork, inspectWork, updateWork, releaseWork, commitWorkerWork, submitWork, integrateWork, finishWork, cleanupWork, recoverWork, workBoard, workHistory, syncWork } from '../src/work-groups.mjs'
+import { nextWork, claimReviewWaiting } from '../src/work-wait.mjs'
 import { claimReview, finishReview, releaseReview, resumeWork } from '../src/work-review.mjs'
 import { runWork, recoverRunner } from '../src/work-runner.mjs'
 import { inspectWorkspace } from '../src/workspace.mjs'
@@ -849,4 +850,181 @@ test('새 clone에서도 저장된 묶음 이름과 다른 묶음의 STATE 기�
   assert.equal(state.match(/^## work$/gm).length, 1)
   assert.equal(state.match(/^\| kept \|/gm).length, 1)
   assert.equal(state.match(/^\| next-group \|/gm).length, 1)
+})
+
+const laneTask = (id, dep, lane) => task(id, dep).replace(`dep:${dep}`, `dep:${dep} | touches:${lane === '-' ? '-' : `src/${lane}/`} | lane:${lane}`)
+
+// specs: [id, dep, lane]. Replaces the default T001-T003 plan with lanes.
+async function laneFixture(t, specs) {
+  const setup = await fixture(t)
+  for (const file of ['T001.first.md', 'T002.second.md', 'T003.after.md']) await rm(path.join(setup.root, 'spec/tasks', file))
+  for (const [id, dep, lane] of specs) await writeFile(path.join(setup.root, `spec/tasks/${id}.lane.md`), laneTask(id, dep, lane))
+  const stateFile = path.join(setup.root, 'spec/STATE.md')
+  const rows = specs.map(([id, dep]) => `| ${id} | lane | ARCH | ${dep} | todo |`).join('\n')
+  await writeFile(stateFile, (await readFile(stateFile, 'utf8')).replace(/(\|---\|---\|---\|---\|---\|\n)(?:\| T\d+[^\n]*\n)+/, `$1${rows}\n`))
+  await commit(setup.root, 'lane plan')
+  return setup
+}
+
+async function complete(workspace, taskId, file = `${taskId}.txt`) {
+  const taskFile = path.join(workspace, `spec/tasks/${taskId}.lane.md`)
+  await writeFile(taskFile, (await readFile(taskFile, 'utf8')).replace('- [ ]', '- [v]') + `- outcome: implemented\n- at: -\n- verified: worker ran ${taskId} tests\n- limits: -\n`)
+  await writeFile(path.join(workspace, file), `${taskId}\n`)
+  return commit(workspace, `implement ${taskId}`)
+}
+
+async function deliver(setup, attempt, verify) {
+  await approve(setup, attempt)
+  return integrateWork({ ...setup, attempt: attempt.id, verify })
+}
+
+test('lane은 한 공간에서 순서대로 구현하고 lane 단위로 리뷰·통합한다', async (t) => {
+  const setup = await laneFixture(t, [['T001', '-', '-'], ['T002', 'T001', 'a'], ['T003', 'T002', 'a'], ['T004', 'T001', 'b'], ['T005', 'T003 T004', '-']])
+  const group = await startWork({ ...setup, name: 'lanes' })
+  let board = await workBoard({ ...setup, work: group.id })
+  assert.deepEqual(board.units.map((unit) => [unit.key, unit.waitingOn, unit.claimable]), [
+    ['T001', [], true], ['lane:a', ['T001'], false], ['lane:b', ['T001'], false], ['T005', ['T003', 'T004'], false]])
+  const base = await claimNextWork({ ...setup, work: group.id, owner: 'a' })
+  assert.deepEqual(base.tasks, ['T001'])
+  assert.equal((await claimNextWork({ ...setup, work: group.id, owner: 'b' })).reason, 'no-eligible-task')
+  await complete(base.workspace, 'T001')
+  await submitWork({ ...setup, attempt: base.id, verify: [checkFile('T001.txt')] })
+  await deliver(setup, base, [checkFile('T001.txt')])
+
+  const laneA = await claimNextWork({ ...setup, work: group.id, owner: 'a' })
+  assert.deepEqual([laneA.lane, laneA.tasks, laneA.taskId], ['a', ['T002', 'T003'], 'T002'])
+  assert.match(laneA.branch, /^lane\/lanes\/a-/)
+  const laneB = await claimNextWork({ ...setup, work: group.id, owner: 'b' })
+  assert.deepEqual(laneB.tasks, ['T004'])
+  const first = await complete(laneA.workspace, 'T002')
+  // No host check at a lane step: the worker's impact-selected tests stay its evidence.
+  const step = await submitWork({ ...setup, attempt: laneA.id })
+  assert.deepEqual([step.status, step.taskId, step.steps.map((entry) => entry.commit)], ['doing', 'T003', [first]])
+  assert.equal((await workBoard({ ...setup, work: group.id })).tasks.find((entry) => entry.id === 'T003').runtimeStatus, 'doing')
+  await assert.rejects(submitWork({ ...setup, attempt: laneA.id }), /T003: .*acceptance/)
+  const last = await complete(laneA.workspace, 'T003')
+  const ready = await submitWork({ ...setup, attempt: laneA.id, verify: [checkFile('T003.txt')] })
+  assert.deepEqual([ready.status, ready.verifiedCommit], ['ready', last])
+  const integrated = await deliver(setup, laneA, [checkFile('T002.txt'), checkFile('T003.txt')])
+  assert.match(await git(group.path, 'log', '-1', '--format=%s').then((out) => out.stdout), /Integrate lane a \(T002 T003\)/)
+  const archived = await readFile(path.join(group.path, 'spec/tasks/done/T002.lane.md'), 'utf8')
+  assert.match(archived, new RegExp(`at: ${first}`))
+  assert.match(archived, /verified: worker ran T002 tests; integration "node -e/)
+  assert.match(await readFile(path.join(group.path, 'spec/tasks/done/T003.lane.md'), 'utf8'), new RegExp(`at: ${last}\\n- verified: "node -e .*T003.txt.*; integration`))
+  const state = await readFile(path.join(group.path, 'spec/STATE.md'), 'utf8')
+  assert.ok(!/\| T00[23] \|/.test(state))
+  assert.match(state, /- \d{6} T002 T003 integrated/)
+  assert.equal(integrated.status, 'integrated')
+
+  await complete(laneB.workspace, 'T004')
+  await submitWork({ ...setup, attempt: laneB.id })
+  await deliver(setup, laneB, [checkFile('T004.txt')])
+  const last5 = await claimNextWork({ ...setup, work: group.id, owner: 'c' })
+  assert.deepEqual(last5.tasks, ['T005'])
+  await assert.rejects(finishWork({ ...setup, work: group.id, verify: [checkFile('T001.txt')] }), /통합되지 않은/)
+  await complete(last5.workspace, 'T005')
+  await submitWork({ ...setup, attempt: last5.id })
+  await deliver(setup, last5, [checkFile('T005.txt')])
+  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'x' })).reason, 'complete')
+  await assert.rejects(finishWork({ ...setup, work: group.id, verify: [checkFile('missing.txt')] }), /검증 실패/)
+  const finished = await finishWork({ ...setup, work: group.id, verify: ['T001.txt', 'T002.txt', 'T003.txt', 'T004.txt', 'T005.txt'].map(checkFile) })
+  assert.equal(finished.snapshotError, undefined)
+  board = await workBoard({ ...setup, work: group.id })
+  assert.equal(board.verified.commit, finished.verified.commit)
+  assert.equal(board.verified.current, true)
+  assert.equal(JSON.parse(await readFile(path.join(group.path, 'spec/work/lanes.json'), 'utf8')).group.verified.commit, finished.verified.commit)
+  const { history } = await workHistory({ ...setup, work: group.id, task: 'T003' })
+  assert.ok(history.some((entry) => entry.attemptId === laneA.id && entry.status === 'integrated'))
+})
+
+test('서로 기다리는 lane 계획은 배정 전에 거부한다', async (t) => {
+  // The reported deadlock: T009 (lane c) waits for T005 (lane b), and T006 (lane b) waits for T009.
+  const setup = await laneFixture(t, [['T005', '-', 'b'], ['T006', 'T009', 'b'], ['T009', 'T005', 'c']])
+  const group = await startWork({ ...setup, name: 'deadlock' })
+  const board = await workBoard({ ...setup, work: group.id })
+  assert.ok(board.errors.some((error) => error.includes('lane 순환')), JSON.stringify(board.errors))
+  await assert.rejects(claimNextWork({ ...setup, work: group.id, owner: 'a' }), /태스크\/STATE/)
+})
+
+test('next --wait는 dep이 열릴 때까지 대기하고 진행할 수 없으면 stalled를 반환한다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'waiting' })
+  const a = await claimWork({ ...setup, work: group.id, task: 'T001', owner: 'a' })
+  const b = await claimWork({ ...setup, work: group.id, task: 'T002', owner: 'b' })
+  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'c' })).reason, 'no-eligible-task')
+  const waitingWorker = nextWork({ ...setup, work: group.id, owner: 'c', wait: 60, pollMs: 50 })
+  const waitingReviewer = claimReviewWaiting({ ...setup, work: group.id, owner: 'r', wait: 60, pollMs: 50 })
+  await implement(a)
+  await submitWork({ ...setup, attempt: a.id, verify: checks })
+  const review = await waitingReviewer
+  assert.equal(review.attempt, a.id)
+  await finishReview({ ...setup, review: review.id, result: { verdict: 'approved', summary: 'reviewed', findings: [] } })
+  await integrateWork({ ...setup, attempt: a.id, verify: checks })
+  const unblocked = await waitingWorker
+  assert.deepEqual([unblocked.taskId, unblocked.owner], ['T003', 'c'])
+  await updateWork({ ...setup, attempt: b.id, status: 'blocked', reason: 'needs decision' })
+  await updateWork({ ...setup, attempt: unblocked.id, status: 'blocked', reason: 'needs decision' })
+  const stalled = await nextWork({ ...setup, work: group.id, owner: 'd', wait: 60, pollMs: 50 })
+  assert.equal(stalled.reason, 'stalled')
+  assert.deepEqual(stalled.blocked.map((entry) => entry.tasks).sort(), [['T002'], ['T003']])
+  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'c', wait: 1, pollMs: 50 })).reason, 'stalled')
+})
+
+async function laneAdapter(setup, log) {
+  const adapter = path.join(setup.temporary, 'lane-adapter.mjs')
+  await writeFile(adapter, `import fs from 'node:fs'; import {execFileSync} from 'node:child_process';
+let input=''; for await(const chunk of process.stdin) input+=chunk;
+const job=JSON.parse(input);
+fs.appendFileSync(process.env.HAERAM_TEST_LOG, JSON.stringify({role:job.role,taskId:job.taskId,tasks:job.tasks,workspace:job.workspace})+'\\n');
+if(job.role==='worker') {
+ const file='spec/tasks/'+job.taskId+'.lane.md';
+ fs.writeFileSync(file, fs.readFileSync(file,'utf8').replace('- [ ]','- [v]')+'- outcome: implemented\\n- at: -\\n- verified: fixture\\n- limits: -\\n');
+ fs.writeFileSync(job.taskId+'.txt','done');
+ execFileSync('git',['add','.']);execFileSync('git',['commit','-m','implement '+job.taskId]);
+ process.stdout.write(JSON.stringify({outcome:'completed',summary:'done'}));
+} else process.stdout.write(JSON.stringify({verdict:'approved',summary:'reviewed',findings:[]}));`)
+  const config = path.join(setup.temporary, 'lane-adapter.json')
+  await writeFile(config, JSON.stringify({ command: process.execPath, args: [adapter] }))
+  return { adapter: config, env: { ...process.env, HAERAM_TEST_LOG: log } }
+}
+
+test('실행기는 lane 태스크를 같은 공간에 차례로 배정하고 묶음 완료 검증을 한 번 실행한다', async (t) => {
+  const setup = await laneFixture(t, [['T001', '-', '-'], ['T002', 'T001', 'a'], ['T003', 'T002', 'a'], ['T004', 'T001', 'b'], ['T005', 'T004', 'b'], ['T006', 'T003 T005', '-']])
+  const group = await startWork({ ...setup, name: 'lane-runner' })
+  const log = path.join(setup.temporary, 'dispatch.log')
+  const runner = await laneAdapter(setup, log)
+  const result = await runWork({ ...setup, work: group.id, ...runner,
+    taskVerify: [checkFile('spec/STATE.md')], verify: [checkFile('spec/ssot/ARCH.md')], groupVerify: [checkFile('T006.txt')] })
+  assert.equal(result.outcome, 'completed', JSON.stringify(result))
+  assert.deepEqual(result.failures, [])
+  assert.deepEqual(result.attempts.map((entry) => entry.status), ['integrated', 'integrated', 'integrated', 'integrated'])
+  const jobs = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
+  const workers = jobs.filter((job) => job.role === 'worker')
+  assert.deepEqual(workers.map((job) => job.taskId).sort(), ['T001', 'T002', 'T003', 'T004', 'T005', 'T006'])
+  assert.equal(jobs.filter((job) => job.role === 'reviewer').length, 4)
+  const where = Object.fromEntries(workers.map((job) => [job.taskId, job.workspace]))
+  assert.equal(where.T002, where.T003)
+  assert.equal(where.T004, where.T005)
+  assert.notEqual(where.T002, where.T004)
+  assert.deepEqual(workers.find((job) => job.taskId === 'T003').tasks, ['T002', 'T003'])
+  assert.ok(result.finish.commit)
+  const board = await workBoard({ ...setup, work: group.id })
+  assert.equal(board.verified.current, true)
+  assert.match(await readFile(path.join(group.path, 'spec/tasks/done/T003.lane.md'), 'utf8'), /verified: "node -e .*STATE\.md.*"; integration "node -e .*ARCH\.md/)
+})
+
+test('runner가 lane 중간에 멈추면 다음 runner가 같은 공간에서 이어받는다', async (t) => {
+  const setup = await laneFixture(t, [['T001', '-', 'a'], ['T002', 'T001', 'a']])
+  const group = await startWork({ ...setup, name: 'lane-resume' })
+  const log = path.join(setup.temporary, 'dispatch.log')
+  const runner = await laneAdapter(setup, log)
+  const stopped = await runWork({ ...setup, work: group.id, ...runner, verify: [checkFile('T001.txt')], maxDispatches: 1 })
+  assert.equal(stopped.outcome, 'dispatch-limit')
+  assert.deepEqual(stopped.attempts.map(({ taskId, status }) => [taskId, status]), [['T002', 'doing']])
+  const resumed = await runWork({ ...setup, work: group.id, ...runner, verify: [checkFile('T001.txt'), checkFile('T002.txt')] })
+  assert.equal(resumed.outcome, 'completed', JSON.stringify(resumed))
+  assert.deepEqual(resumed.attempts.map((entry) => entry.status), ['integrated'])
+  const workers = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line)).filter((job) => job.role === 'worker')
+  assert.deepEqual(workers.map((job) => job.taskId), ['T001', 'T002'])
+  assert.equal(workers[0].workspace, workers[1].workspace)
 })

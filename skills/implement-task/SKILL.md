@@ -19,8 +19,9 @@ description: >-
 
 ## 1. 환경과 선택
 - `npx haeram-spec-creator work status --json`으로 현재 배정을 확인한다. CLI가 없거나 `work`를 지원하지 않으면 기존 단독 흐름은 가능하지만 공유 선점을 흉내 내지 않는다.
-- `mode:worker`이면 반환된 currentAttempt의 태스크와 workspace를 사용한다. doing은 배정대로 구현하고 blocked는 원인 해소와 `work update --status doing` 이후 재개한다. changes_requested는 `work resume`로 수정 배정을 받는다. ready·reviewing·approved는 리뷰·통합 대기다. verifying/integrating/cleaning 중인 공간에 쓰지 않는다. integrated/released/failed라면 종료 기록을 보고 manage-work로 정리·재배정한다. 브랜치명으로 이어받을 태스크를 추정하지 않는다.
+- `mode:worker`이면 반환된 currentAttempt의 태스크와 workspace를 사용한다. `tasks`가 둘 이상이면 lane 배정이다 — `taskId`가 지금 구현할 태스크이고, 앞 태스크의 커밋 위에서 이어 간다. doing은 배정대로 구현하고 blocked는 원인 해소와 `work update --status doing` 이후 재개한다. changes_requested는 `work resume`로 수정 배정을 받는다. ready·reviewing·approved는 리뷰·통합 대기다. verifying/integrating/cleaning 중인 공간에 쓰지 않는다. integrated/released/failed라면 종료 기록을 보고 manage-work로 정리·재배정한다. 브랜치명으로 이어받을 태스크를 추정하지 않는다.
 - `mode:reviewer`이면 구현하지 않고 review-task/manage-work로 인계한다.
+- 배정이 없거나 끝난 워커 세션은 바로 종료하지 않고 `npx haeram-spec-creator work next --work <group> --owner <label> --wait 540 --json`으로 수정 요청·다음 단위를 받는다(모델 호출 없이 대기, 셸 도구의 timeout을 대기 시간보다 길게). `complete`면 종료, `stalled`면 막힌 원인을 보고하고 종료, `timeout`이면 다시 호출한다.
 - `mode:group`이면 `manage-work`의 board→claim으로 작업자를 배정한다. `mode:single`이며 작은 단독 요청이면 아래 단독 흐름을 사용한다. 사용자가 병렬 작업을 요청했다면 `manage-work`로 묶음을 만든다. Orca 등 특정 실행기를 요구하거나 매번 모드를 묻지 않는다.
 - **작업 묶음 워커**: doing/blocked/heartbeat는 `work update --attempt <id>`로 기록한다(명령 앞에 `npx haeram-spec-creator`를 붙인다). 태스크 st·base·goal·acceptance 문구·impl notes·STATE·SSOT는 수정하지 않는다. 자신의 acceptance 체크와 result, 구현 코드만 바꾼다.
 - **단독 흐름**: 인자 T###이 없으면 STATE tasks에서 dep이 전부 충족된 첫 todo를 고른다(dep 충족 = 그 ID가 표에 없고 `tasks/done/`에 파일이 있음). doing은 다른 세션 소유로 보고, 회수는 사용자가 지시했을 때만 한다. 세션 tag(2~4자)로 STATE와 태스크 st를 `doing@YYMMDD.tag`로 바꾸고 log를 기록한다. 다시 읽어 다른 tag면 중단한다. 이것은 진행 기록이며 원자적 선점이 아니므로 같은 checkout의 동시 쓰기에 사용하지 않는다.
@@ -37,12 +38,14 @@ description: >-
 - 태스크는 질문 없이 완주 가능해야 정상이다. 구현 중 결정이 필요한 질문이 생기면 분해 실패 신호 — 임의로 정하지 말고, 기획 공백·모순이면 update-ssot 제안, 기술 결정 누락이면 blocked 후 create-task 재분해 제안.
 
 ## 4. 검증 (항상 이 순서로 마친다)
-① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx -y haeram-spec-creator lint`로 spec 정합성을 검사하고 오류·경고는 고친다(네트워크·CLI가 없으면 생략) — 출력의 `검토 후보`는 구조 위반이 아니라 문서 품질 신호라 여기서 고치지 않고, 쌓이면 단독 작업의 next에 `doc-review <ID>`를 남기고, 묶음 워커는 result limits로 기획 공간에 인계한다. ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다. 마지막으로 done 직전 신선도 재확인(2단계와 동일, 현재 checkout 기준이며 다른 브랜치의 SSOT 변경은 자동으로 보이지 않음) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
+① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test — 태스크 단계 ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx -y haeram-spec-creator lint`로 spec 정합성을 검사하고 오류·경고는 고친다(네트워크·CLI가 없으면 생략) — 출력의 `검토 후보`는 구조 위반이 아니라 문서 품질 신호라 여기서 고치지 않고, 쌓이면 단독 작업의 next에 `doc-review <ID>`를 남기고, 묶음 워커는 result limits로 기획 공간에 인계한다. ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다.
+- **태스크 단계 test**: 이 태스크가 추가·수정한 테스트와 변경이 영향을 줄 수 있는 기존 테스트(역의존 import, 공유 계약·설정·마이그레이션·테스트 설정의 소비자)만 실행한다. 영향 범위를 한정할 수 없으면 그 스위트 전체로 넓힌다. 선택한 명령과 영향 판단 근거를 result verified에 남기고, 빈 선택을 동작 검증으로 세지 않는다.
+- **전체 스위트와 ⑤ CI 재현**: 작업 묶음에서는 단위 통합(`work integrate --verify`)과 묶음 완료(`work finish --verify`)가 실행하므로 워커는 돌리지 않는다. 단독 흐름은 ARCH에 단계 구분(태스크/push 전 등)이 있으면 그 단계에 맡기고, 없으면 ARCH verify 전체를 실행한다. 마지막으로 done 직전 신선도 재확인(2단계와 동일, 현재 checkout 기준이며 다른 브랜치의 SSOT 변경은 자동으로 보이지 않음) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
 
 ## 5. 마감
 - 기본 어댑터가 커밋도 호스트가 담당한다고 지정했다면 코드·acceptance·result를 채우고 지정된 JSON 결과를 반환한다. git add/commit·submit은 실행하지 않는다. 호스트가 변경 범위·시작 HEAD를 확인하고 커밋·검증·제출한다. 아직 커밋되지 않은 변경을 검사했다면 result at은 `-`로 쓰고, 실제 실행한 검사만 verified에 적는다.
 - 커밋은 워커에게 맡기는 `commit-only` 실행기라면 아래 작업 묶음 절차에서 commit까지 수행하고 지정된 JSON 결과를 반환한다. submit·재배정·통합은 runner가 담당한다. 모든 수정 배정에서 전달된 correction findings를 먼저 읽고 acceptance와 함께 확인한다.
-- **작업 묶음 워커**는 아래 result 4줄을 채우고 코드와 자신의 태스크 변경만 커밋한 뒤 `npx haeram-spec-creator work submit --attempt <id> --verify '<ARCH command>' --json`으로 실제 검증을 실행한다(`--verify` 반복 가능). 그룹 작업을 수행하도록 받은 지시의 범위에 커밋이 포함되지 않았거나 금지됐다면 결과를 보존하고 제출에 필요한 커밋을 보고한다. 명령 성공 시 리뷰 대기 ready이며, STATE 갱신·done 표기·아카이브 이동은 하지 않고 관리 세션에 attempt와 검증 커밋을 전달한다. 통합과 정리는 `manage-work`가 수행한다.
+- **작업 묶음 워커**는 아래 result 4줄을 채우고 코드와 자신의 태스크 변경만 커밋한 뒤 `npx haeram-spec-creator work submit --attempt <id> --verify '<태스크 단계 test 명령>' --json`으로 실제 검증을 실행한다(`--verify` 반복 가능, 전체 스위트는 넣지 않는다). lane 배정에서 응답이 `status:doing`이고 `taskId`가 바뀌었으면 같은 공간에서 다음 태스크를 1단계(정독)부터 이어 구현한다 — 마지막 태스크의 submit이 ready다. 그룹 작업을 수행하도록 받은 지시의 범위에 커밋이 포함되지 않았거나 금지됐다면 결과를 보존하고 제출에 필요한 커밋을 보고한다. 명령 성공 시 리뷰 대기 ready이며, STATE 갱신·done 표기·아카이브 이동은 하지 않고 관리 세션에 attempt와 검증 커밋을 전달한다. 통합과 정리는 `manage-work`가 수행한다.
 - 아래 아카이브·STATE 마감 절차는 **단독 흐름에만** 적용한다.
 - 태스크 `## result`(FORMAT 골격, 4줄): `- outcome:` 무엇이 되게 됐는지 / `- at:` 검증을 돌린 커밋 SHA(git이 없으면 `-`) / `- verified:` 실제로 통과시킨 검사 / `- limits:` 남은 한계·후속(없으면 `-`). 대화 경위와 구현 과정 서술은 넣지 않는다.
 - 구현 중 정해진 것 중 **이후 변경이 계속 지켜야 하는 계약**은 result에 적어 끝내지 않는다 — 완료 태스크는 아카이브라 아무도 현재 규칙으로 읽지 않는다. update-ssot를 제안해 SSOT로 올린다.

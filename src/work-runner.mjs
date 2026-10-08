@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { builtInAdapter } from './work-providers.mjs'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { inspectWork, claimNextWork, commitWorkerWork, submitWork, integrateWork, workBoard, syncWork, workInternals } from './work-groups.mjs'
+import { inspectWork, claimNextWork, commitWorkerWork, submitWork, integrateWork, finishWork, workBoard, syncWork, workInternals } from './work-groups.mjs'
 import { claimReview, finishReview, releaseReview, resumeWork } from './work-review.mjs'
 import { readRuntime, transaction } from './work-runtime.mjs'
-import { workLimits } from './work-policy.mjs'
+import { workLimits, activeAttempt } from './work-policy.mjs'
 
 const { repository, groupOf, attemptOf, now, fail, requireStopped, commands } = workInternals
 
@@ -56,13 +56,17 @@ async function adapterConfig(options) {
   return config
 }
 
+// Three verification tiers: taskVerify at every task submission (optional, fast),
+// verify at every unit integration, groupVerify once after the last integration.
 export async function runWork(options) {
   const verify = commands(options)
+  const taskVerify = commands(options, 'taskVerify', true)
+  const groupVerify = commands(options, 'groupVerify', true)
   const config = await adapterConfig(options)
   const context = await repository(options)
   if (options.dryRun) {
     const group = groupOf(await readRuntime(context.root), options.work)
-    return { schemaVersion: 1, dryRun: true, work: group.id, limits: workLimits(group.limits), adapter: config, verify, modelRequests: 0 }
+    return { schemaVersion: 1, dryRun: true, work: group.id, limits: workLimits(group.limits), adapter: config, verify, taskVerify, groupVerify, modelRequests: 0 }
   }
   const run = { adapter: config.kind, providers: config.roles ? Object.fromEntries(Object.entries(config.roles).map(([role, entry]) => [role, { provider: entry.provider, model: entry.model, version: entry.version }])) : null,
     workers: config.workers?.map((entry) => ({ provider: entry.provider, model: entry.model, version: entry.version })) ?? null,
@@ -83,8 +87,8 @@ export async function runWork(options) {
   let interrupted = false
   const abort = new AbortController()
   let heartbeatError = null
-  let snapshot = null, snapshotError = null
-  const outcomeFor = (board) => interrupted || heartbeatError ? 'interrupted' : board.tasks.length === 0 ? 'completed' : dispatched >= config.maxDispatches ? 'dispatch-limit' : 'needs-attention'
+  let snapshot = null, snapshotError = null, finish = null, finishError = null
+  const outcomeFor = (board) => interrupted || heartbeatError ? 'interrupted' : board.tasks.length === 0 && !finishError ? 'completed' : dispatched >= config.maxDispatches ? 'dispatch-limit' : 'needs-attention'
   const kill = (job) => {
     if (!job.child || job.settled) return
     try { if (process.platform === 'win32') job.child.kill('SIGTERM'); else process.kill(-job.child.pid, 'SIGTERM') } catch {}
@@ -106,6 +110,16 @@ export async function runWork(options) {
     })).catch((error) => { heartbeatError = error.message; stop() })
   }, 10000)
   timer.unref()
+
+  const orphaned = (entry) => /^[0-9a-f-]{36}\/worker-\d+$/.test(entry.owner ?? '') && !entry.owner.startsWith(`${run.id}/`) &&
+    !['starting', 'running'].includes(entry.dispatch?.status)
+  const adopt = (entry, owner) => transaction(context.root, (state) => {
+    const live = attemptOf(state, entry.id)
+    if (live.status !== 'doing' || live.owner !== entry.owner) return null
+    live.contributors = [...new Set([...(live.contributors ?? [live.owner]), owner])]
+    live.owner = owner
+    return live
+  })
 
   const launch = async (role, attempt, slot, review) => {
     if (stopping) {
@@ -133,17 +147,17 @@ export async function runWork(options) {
     })
     jobs.set(id, job)
     dispatched += 1
-    const key = `${role}:${attempt.id}`
+    const key = role === 'worker' ? `worker:${attempt.id}:${attempt.taskId}` : `reviewer:${attempt.id}`
     counts.set(key, (counts.get(key) ?? 0) + 1)
     const payload = { schemaVersion: 1, dispatchId: id, role, slot, provider: adapter.provider ?? 'custom', model: adapter.model ?? null, group: group.id, attempt: attempt.id,
-      taskId: attempt.taskId, workspace: job.workspace, groupBranch: group.branch,
+      taskId: attempt.taskId, tasks: attempt.tasks ?? [attempt.taskId], lane: attempt.lane ?? null, workspace: job.workspace, groupBranch: group.branch,
       cliCommand: [process.execPath, fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.url))],
       boardCommand: ['work', 'board', '--work', group.id, '--json'],
-      verify, review: review ?? null, correction: attempt.correction ?? null,
+      verify, taskVerify, review: review ?? null, correction: attempt.correction ?? null,
       instruction: role === 'worker'
-        ? 'Use implement-task. Implement or fix review findings in this workspace, check acceptance, fill result, and commit. Return JSON {"outcome":"completed","summary":"..."}. The runner owns submit; do not submit, integrate, or claim another task. For a blocker return {"outcome":"blocked","summary":"reason"}.'
-        : 'Use review-task. Review the pinned commit against baseCommit, task, and SSOT. Do not edit or commit. Return JSON {"verdict":"approved|changes_requested","summary":"...","findings":[{"priority":"P1|P2|P3","where":"file:line","message":"..."}]}. The runner owns review-finish.' }
-    if (config.kind === 'builtin' && role === 'worker') payload.instruction = 'Use implement-task to edit and verify your task. Do not commit or submit; the host runner validates scope, commits and submits. Return JSON with outcome completed|blocked and summary.'
+        ? 'Use implement-task. Implement only taskId (or fix review findings) in this workspace, run the checks this task adds or affects, check acceptance, fill result, and commit. Full suites run at unit integration. Return JSON {"outcome":"completed","summary":"..."}. The runner owns submit and dispatches the next lane task to this workspace; do not submit, integrate, or claim another task. For a blocker return {"outcome":"blocked","summary":"reason"}.'
+        : 'Use review-task. Review the pinned commit against baseCommit, every task in tasks, and SSOT. Do not edit or commit. Return JSON {"verdict":"approved|changes_requested","summary":"...","findings":[{"priority":"P1|P2|P3","where":"file:line","message":"..."}]}. The runner owns review-finish.' }
+    if (config.kind === 'builtin' && role === 'worker') payload.instruction = 'Use implement-task to edit and verify only taskId, running the checks this task adds or affects; full suites run at unit integration. Do not commit or submit; the host runner validates scope, commits, submits and dispatches the next lane task. Return JSON with outcome completed|blocked and summary.'
     const child = spawn(adapter.command, adapter.args, { cwd: job.workspace, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: { ...(options.env ?? process.env), HAERAM_ROLE: role, HAERAM_ATTEMPT: attempt.id, HAERAM_DISPATCH: id } })
     job.child = child
     let output = '', stderr = '', overflow = false
@@ -174,7 +188,7 @@ export async function runWork(options) {
       else {
         if (result.outcome !== 'completed') fail(result.summary || 'worker did not complete')
         if (config.kind === 'builtin') await commitWorkerWork({ ...options, attempt: job.attempt, expectedHead: job.expectedHead, signal: abort.signal })
-        await submitWork({ ...options, attempt: job.attempt, verify, signal: abort.signal })
+        await submitWork({ ...options, attempt: job.attempt, verify: taskVerify, signal: abort.signal })
       }
     } catch (error) {
       job.resultError = error.message
@@ -214,10 +228,15 @@ export async function runWork(options) {
         for (let slot = 1; slot <= limits.workers && !stopping && dispatched < config.maxDispatches; slot += 1) {
           if ([...jobs.values()].some((job) => job.role === 'worker' && job.slot === slot)) continue
           const owner = `${run.id}/worker-${slot}`
-          let attempt = await resumeWork({ ...options, owner })
+          // A submitted lane step leaves the attempt doing with its next task in the same workspace.
+          // A lane left between tasks by an earlier, finished runner is adopted the same way.
+          let attempt = entries().find((entry) => entry.status === 'doing' && ![...jobs.values()].some((job) => job.attempt === entry.id) &&
+            (entry.owner === owner || orphaned(entry)))
+          if (attempt && attempt.owner !== owner) attempt = await adopt(attempt, owner)
+          attempt ??= await resumeWork({ ...options, owner })
           if (attempt.idle) attempt = await claimNextWork({ ...options, owner, workspace: 'new' })
           if (attempt.idle) continue
-          if ((counts.get(`worker:${attempt.id}`) ?? 0) >= config.maxTaskRuns) {
+          if ((counts.get(`worker:${attempt.id}:${attempt.taskId}`) ?? 0) >= config.maxTaskRuns) {
             await transaction(context.root, (live) => { Object.assign(attemptOf(live, attempt.id), { status: 'blocked', reason: 'worker retry limit; inspect review findings' }) })
             failures.push({ attempt: attempt.id, error: 'worker retry limit' }); continue
           }
@@ -250,7 +269,15 @@ export async function runWork(options) {
     clearTimeout(forced)
     for (const job of [...jobs.values()]) { job.error ??= 'runner stopped before accepting result'; await settle(job) }
     process.off('SIGINT', stop); process.off('SIGTERM', stop)
-    const finalBoard = await workBoard(options).catch(() => null)
+    let finalBoard = await workBoard(options).catch(() => null)
+    if (groupVerify.length && !interrupted && !heartbeatError && finalBoard && !finalBoard.tasks.some((task) => !task.st?.startsWith('blocked@')) &&
+        !finalBoard.attempts.some(activeAttempt)) {
+      try { finish = (await finishWork({ ...options, verify: groupVerify, runnerId: run.id, signal: abort.signal })).verified } catch (error) {
+        finishError = error.message
+        failures.push({ role: 'finish', error: error.message, details: error.details ?? [] })
+      }
+      finalBoard = await workBoard(options).catch(() => null)
+    }
     await transaction(context.root, (state) => {
       const current = groupOf(state, group.id)
       if (current.runner?.id === run.id) { current.lastRun = { ...run, stoppedAt: now(), dispatched, failures, outcome: finalBoard ? outcomeFor(finalBoard) : 'needs-attention' }; delete current.runner }
@@ -260,7 +287,7 @@ export async function runWork(options) {
   const board = await workBoard(options)
   const status = await inspectWork(options)
   const attempts = status.attempts.filter((entry) => entry.group === group.id)
-  return { schemaVersion: 1, run: run.id, dispatched, failures, heartbeatError, snapshot, snapshotError, summary: board.summary,
+  return { schemaVersion: 1, run: run.id, dispatched, failures, heartbeatError, snapshot, snapshotError, finish, finishError, summary: board.summary,
     outcome: outcomeFor(board),
     remaining: board.tasks.map(({ id, waitingOn, runtimeStatus }) => ({ id, waitingOn, runtimeStatus })),
     attempts: attempts.map(({ id, taskId, status, reason }) => ({ id, taskId, status, reason })) }

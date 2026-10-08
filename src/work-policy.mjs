@@ -32,11 +32,20 @@ export function overlaps(left = [], right = []) {
     return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
   }))
 }
-export function rankedTasks(tasks) {
-  const descendants = (id, seen = new Set()) => {
-    for (const task of tasks) if (task.deps.includes(id) && !seen.has(task.id)) { seen.add(task.id); descendants(task.id, seen) }
+// Attempts created before lanes carry only taskId.
+export const unitTasks = (attempt) => attempt.tasks ?? [attempt.taskId]
+
+// Units that unlock the most outside work go first, then the oldest task ID.
+export function rankedUnits(units, tasks) {
+  const unlocks = (ids) => {
+    const seen = new Set()
+    const stack = [...ids]
+    while (stack.length) {
+      const id = stack.pop()
+      for (const task of tasks) if (task.deps.includes(id) && !ids.includes(task.id) && !seen.has(task.id)) { seen.add(task.id); stack.push(task.id) }
+    }
     return seen.size
   }
-  return tasks.map((task) => ({ ...task, unlocks: descendants(task.id) }))
-    .sort((a, b) => b.unlocks - a.unlocks || a.id.localeCompare(b.id, 'en', { numeric: true }))
+  return units.map((unit) => ({ ...unit, unlocks: unlocks(unit.ids) }))
+    .sort((a, b) => b.unlocks - a.unlocks || a.ids[0].localeCompare(b.ids[0], 'en', { numeric: true }))
 }

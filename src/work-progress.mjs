@@ -1,23 +1,26 @@
-import { activeAttempt, workerBusy, pendingReview } from './work-policy.mjs'
+import { activeAttempt, workerBusy, pendingReview, unitTasks } from './work-policy.mjs'
 
 const pick = (value, keys) => Object.fromEntries(keys.filter((key) => value?.[key] !== undefined).map((key) => [key, value[key]]))
-const checks = (values) => values?.map((value) => pick(value, ['command', 'startedAt', 'finishedAt']))
+export const progressChecks = (values) => values?.map((value) => pick(value, ['command', 'startedAt', 'finishedAt']))
+const checks = progressChecks
+const step = (value) => ({ ...pick(value, ['taskId', 'commit', 'at']), verification: checks(value.verification) ?? [] })
 const dispatch = (value) => value && pick(value, ['id', 'runner', 'role', 'slot', 'provider', 'model', 'status', 'startedAt', 'finishedAt', 'error', 'summary'])
 const review = (value) => value && pick(value, ['id', 'owner', 'status', 'verdict', 'summary', 'findings', 'commit', 'baseCommit', 'submissionId', 'createdAt', 'finishedAt', 'releasedAt', 'invalidatedAt', 'invalidationReason', 'reason'])
 const run = (value) => value && pick(value, ['id', 'adapter', 'providers', 'workers', 'startedAt', 'stoppedAt', 'dispatched', 'outcome', 'failures'])
 
 export function progressAttempt(value) {
   return {
-    ...pick(value, ['id', 'group', 'taskId', 'owner', 'contributors', 'status', 'reason', 'error', 'createdAt', 'startCommit', 'verifiedCommit', 'submittedBase', 'submissionId', 'submittedAt', 'integratedCommit', 'integratedAt', 'releasedAt', 'cleanedAt']),
+    ...pick(value, ['id', 'group', 'taskId', 'tasks', 'lane', 'owner', 'contributors', 'status', 'reason', 'error', 'createdAt', 'startCommit', 'verifiedCommit', 'submittedBase', 'submissionId', 'submittedAt', 'integratedCommit', 'integratedAt', 'releasedAt', 'cleanedAt']),
     ...(value.dispatch ? { dispatch: dispatch(value.dispatch) } : {}),
     ...(value.review ? { review: review(value.review) } : {}),
     ...(value.reviewHistory?.length ? { reviewHistory: value.reviewHistory.map(review) } : {}),
+    ...(value.steps?.length ? { steps: value.steps.map(step) } : {}),
     ...(value.verification ? { verification: checks(value.verification) } : {}),
     ...(value.integrationVerification ? { integrationVerification: checks(value.integrationVerification) } : {}),
   }
 }
 
-const progressGroup = (value) => ({ ...pick(value, ['id', 'branch', 'status', 'createdAt', 'limits']),
+const progressGroup = (value) => ({ ...pick(value, ['id', 'branch', 'status', 'createdAt', 'limits', 'verified']),
   ...(value.runner ? { runner: run(value.runner) } : {}), ...(value.lastRun ? { lastRun: run(value.lastRun) } : {}) })
 
 // History and the latest state are committed by the same atomic runtime rename.
@@ -33,26 +36,29 @@ export function recordProgress(previous, state, at = new Date().toISOString()) {
         .filter((key) => JSON.stringify(old?.[key]) !== JSON.stringify(next[key]))
         .map((key) => [key, next[key] ?? null]))
       state.history.push({ sequence: state.history.length + 1, at, type, group: type === 'group' ? id : entry.group,
-        ...(type === 'attempt' ? { attemptId: id, taskId: entry.taskId } : {}), previousStatus: old?.status ?? null, status: next.status, changes })
+        ...(type === 'attempt' ? { attemptId: id, taskId: entry.taskId, ...(unitTasks(entry).length > 1 ? { tasks: unitTasks(entry) } : {}) } : {}), previousStatus: old?.status ?? null, status: next.status, changes })
     }
   }
 }
 
 export function workSummary(board, attempts) {
-  const completed = new Set(attempts.filter((entry) => entry.status === 'integrated' && board.doneIds.includes(entry.taskId)).map((entry) => entry.taskId))
-  const live = attempts.filter((entry) => activeAttempt(entry) && board.tasks.some((task) => task.id === entry.taskId))
+  const completed = new Set(attempts.filter((entry) => entry.status === 'integrated').flatMap(unitTasks).filter((id) => board.doneIds.includes(id)))
+  const live = attempts.filter((entry) => activeAttempt(entry) && unitTasks(entry).some((id) => board.tasks.some((task) => task.id === id)))
+  const owning = (task) => live.find((entry) => unitTasks(entry).includes(task.id))
+  // Counts are tasks, so a lane of three under review counts three.
+  const count = (predicate) => board.tasks.filter((task) => owning(task) && predicate(owning(task))).length
   return { total: board.tasks.length + completed.size, completed: completed.size, remaining: board.tasks.length,
-    running: live.filter(workerBusy).length, review: live.filter(pendingReview).length,
-    blocked: live.filter((entry) => ['blocked', 'changes_requested'].includes(entry.status)).length,
-    unassigned: board.tasks.filter((task) => !live.some((entry) => entry.taskId === task.id)).length }
+    running: count(workerBusy), review: count(pendingReview),
+    blocked: count((entry) => ['blocked', 'changes_requested'].includes(entry.status)),
+    unassigned: board.tasks.filter((task) => !owning(task)).length }
 }
 
 export function progressSnapshot(group, board, state) {
   const attempts = Object.values(state.attempts).filter((entry) => entry.group === group.id)
   return { schemaVersion: 1, snapshotAt: new Date().toISOString(), sourceCommit: board.commit,
     group: progressGroup(group), summary: workSummary(board, attempts),
-    tasks: board.tasks.map((task) => ({ id: task.id, title: task.title, dep: task.deps,
-      status: attempts.find((entry) => entry.taskId === task.id && activeAttempt(entry))?.status ?? task.st })),
+    tasks: board.tasks.map((task) => ({ id: task.id, title: task.title, dep: task.deps, ...(task.lane ? { lane: task.lane } : {}),
+      status: attempts.find((entry) => unitTasks(entry).includes(task.id) && activeAttempt(entry))?.status ?? task.st })),
     attempts: attempts.map(progressAttempt), history: (state.history ?? []).filter((entry) => entry.group === group.id) }
 }
 

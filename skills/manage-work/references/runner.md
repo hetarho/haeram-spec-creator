@@ -9,11 +9,20 @@
 ```bash
 npx haeram-spec-creator work start feature --workers 4 --reviewers 1 --max-pending 8 --json
 npx haeram-spec-creator work doctor --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --dry-run --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --dry-run --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --json
 ```
 
-기존 그룹은 기록된 한도를 사용하고, 한도 기록이 없는 그룹은 4/1/8을 사용한다. `--verify`를 반복해 ARCH 검증 명령을 전달한다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
+기존 그룹은 기록된 한도를 사용하고, 한도 기록이 없는 그룹은 4/1/8을 사용한다.
+
+### 검증 단계
+- `--task-verify`(선택): 태스크마다 호스트가 제출 커밋에 실행하는 빠른 검사(lint·타입 검사 등). 워커는 별도로 자기 태스크가 추가·수정·영향을 준 테스트만 실행한다. 전체 스위트를 여기에 넣으면 태스크마다 전체 테스트가 돌아 단계 구분의 의미가 없다.
+- `--verify`(필수): 단위(lane 또는 lane 없는 태스크)를 통합할 때마다 merge 후보에서 한 번 실행한다. 보통 전체 test.
+- `--group-verify`(선택): 모든 단위가 통합되면 묶음 브랜치에서 한 번 실행하고 검증 커밋을 기록한다(`work board`의 `verified`). 생략하면 나중에 `work finish`로 실행한다.
+- 각 옵션은 반복할 수 있고 명령당 상한은 1시간이다(`--verify-timeout-ms`). 명령은 ARCH의 단계별 verify 결정에서 가져온다.
+
+### lane
+lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 새 에이전트를 실행하고, 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
 
 `--provider auto`가 기본이며 호환되는 Codex, Claude 순으로 선택한다. Orca 설치 여부로 실행 방식을 바꾸지 않는다. reviewer-provider를 생략하면 worker와 같은 도구를 사용한다. `--model`·`--reviewer-model`을 생략하면 각 CLI의 설정을 사용한다. 같은 도구의 리뷰어는 명시한 worker 모델을 상속하고, 다른 도구의 리뷰어는 모델을 따로 지정하지 않으면 그 CLI 기본값을 사용한다. 임의로 모델을 추정하거나 설치·로그인하지 않는다.
 
@@ -25,7 +34,7 @@ npx haeram-spec-creator work start feature --workers 6 --reviewers 1 --max-pendi
 npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm test' --json
 ```
 
-providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개·Claude 4개다. 워커 6개에 리뷰어는 별도다. 각 슬롯은 태스크 완료 뒤 다음 의존성 충족 태스크를 가져간다. 태스크 30개를 꼭 5개씩 고정 분배하지 않으며, dep·touches·리뷰 적체가 있으면 실제 동시 실행 수는 줄어든다.
+providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개·Claude 4개다. 워커 6개에 리뷰어는 별도다. 각 슬롯은 단위 완료 뒤 다음 의존성 충족 단위를 가져간다. 태스크 30개를 꼭 5개씩 고정 분배하지 않으며, dep·touches·리뷰 적체가 있으면 실제 동시 실행 수는 줄어든다.
 
 각 도구의 모델을 지정하려면 adapter 파일을 사용한다. workers 배열 역시 슬롯에 순환 배정한다.
 
@@ -46,7 +55,7 @@ providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`
 
 기본 어댑터의 워커는 코드와 자신의 태스크만 편집하고 커밋하지 않는다. 호스트가 시작 시 깨끗한 작업 공간과 HEAD를 기록하고, 종료 시 acceptance·계약·SSOT·spec 변경 범위를 검사한 뒤 커밋한다(`committing`). 이어 검증·제출한다. 예상 밖 HEAD 변경이나 계약 위반은 blocked로 남기며 변경을 되돌리지 않는다. sandbox의 공용 Git 디렉토리 쓰기 권한을 넓히지 않아도 된다.
 
-기본값은 작업별 timeout 1시간, 전체 dispatch 200회, 태스크별·역할별 실행 3회다. `--timeout-ms`·`--max-dispatches`·`--max-task-runs`로 지정할 수 있다. JSON 설정도 가능하다: `{"provider":"codex","reviewerProvider":"claude","maxTaskRuns":3}`를 파일에 저장하고 `--adapter <file>`로 전달한다. provider/model CLI 옵션과 adapter 파일은 함께 지정하지 않는다.
+기본값은 작업별 timeout 1시간, 전체 dispatch 200회, 태스크별·역할별 실행 3회다(lane은 태스크마다 센다). `--timeout-ms`·`--max-dispatches`·`--max-task-runs`로 지정할 수 있다. JSON 설정도 가능하다: `{"provider":"codex","reviewerProvider":"claude","maxTaskRuns":3}`를 파일에 저장하고 `--adapter <file>`로 전달한다. provider/model CLI 옵션과 adapter 파일은 함께 지정하지 않는다.
 
 ## 다른 실행기의 command 어댑터
 
@@ -65,9 +74,9 @@ providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`
 command는 셸을 거치지 않고 실행한다. 상대 command 경로는 설정 파일 기준, args의 경로는 절대 경로 사용을 권장한다. 매 작업마다 지정 workspace에서 새 프로세스를 실행하며, 동일 세션 유지 여부는 어댑터가 결정한다. 모델과 reasoning 설정도 어댑터가 맡는다. 워커 4개는 동시 실행 슬롯 수이며 항상 같은 대화 세션 4개를 뜻하지 않는다.
 
 stdin은 JSON 객체 한 줄이다:
-- `schemaVersion:1`, `dispatchId`, `role:worker|reviewer`, `slot`, `group`, `attempt`, `taskId`, `workspace`, `groupBranch`.
+- `schemaVersion:1`, `dispatchId`, `role:worker|reviewer`, `slot`, `group`, `attempt`, `taskId`(이번 태스크), `tasks`(단위 전체), `lane`, `workspace`, `groupBranch`.
 - `instruction`: 실행 역할과 완료 절차. command 어댑터의 worker는 commit까지, reviewer는 결과 JSON 반환까지 수행한다. 기본 어댑터에서는 worker 커밋도 호스트가 담당한다. submit/review-finish는 runner 소유이므로 중복 호출하지 않는다.
-- `verify`: 실제 검증 명령 배열. `cliCommand`: 현재 패키지 CLI의 실행 파일과 절대 경로 인자 배열. 여기에 `boardCommand`를 이어 붙여 최신 상태를 조회한다.
+- `verify`: 단위 통합 검증 명령 배열, `taskVerify`: 태스크 제출 때 호스트가 실행할 명령 배열(빈 배열 가능). `cliCommand`: 현재 패키지 CLI의 실행 파일과 절대 경로 인자 배열. 여기에 `boardCommand`를 이어 붙여 최신 상태를 조회한다.
 - `correction`: 수정 요청을 재배정할 때 이전 리뷰와 findings; 없으면 null.
 - `review`: 리뷰 배정 시 id, submissionId, commit, baseCommit, workspace, owner. 없으면 null.
 
@@ -83,7 +92,7 @@ stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 �
 
 runner는 빈 슬롯을 채우고 수정 요청을 우선 배정하며 리뷰 대기열을 처리한다. 대기 중 모델 호출은 하지 않는다. 살아 있는 자식 프로세스의 heartbeat는 10초마다 기록하지만 에이전트의 의미 있는 진행을 보장하지는 않는다. 장시간 작업자는 board를 다시 읽고 정책 변경을 판단해야 한다.
 
-완료 시 `outcome:completed`. 더 진행할 수 없으면 `needs-attention`과 남은 작업을 반환한다. 횟수 한도는 `dispatch-limit`, 종료 신호/heartbeat 실패는 `interrupted`. maxTaskRuns는 한 번의 run 안에서 태스크별·역할별 최대 실행 횟수이며 재실행 전에 반복 실패 원인을 확인한다. 자동 통합 실패는 같은 run에서 무한 재시도하지 않는다.
+완료 시 `outcome:completed`(`--group-verify`를 지정했다면 그 검증까지 통과해야 한다, 결과는 `finish`). 더 진행할 수 없으면 `needs-attention`과 남은 작업을 반환한다. 횟수 한도는 `dispatch-limit`, 종료 신호/heartbeat 실패는 `interrupted`. maxTaskRuns는 한 번의 run 안에서 태스크별·역할별 최대 실행 횟수이며 재실행 전에 반복 실패 원인을 확인한다. 자동 통합 실패는 같은 run에서 무한 재시도하지 않는다.
 
 ### 진행 저장
 
@@ -101,10 +110,10 @@ Orca를 사용하면 work run 대신 coordinator가 위 역할을 수행할 수 
 
 `work doctor`는 PATH의 orca/orca-dev/orca-ide와 macOS 앱에 포함된 CLI를 검사한다. 앱만 설치해도 `/Applications/Orca.app/Contents/Resources/bin/orca`를 찾을 수 있고, 터미널에서 `orca`로 쓰려면 Settings → General → Orca CLI에서 등록한다([공식 안내](https://www.onorca.dev/docs/troubleshooting)). 다른 설치 경로는 `ORCA_CLI_COMMAND` 환경 변수로 실행 파일 경로를 지정한다. 앱 실행·PATH 수정·Orca 작업 생성은 doctor가 수행하지 않는다.
 
-1. 빈 worker 슬롯: `work resume`로 수정 요청을 확인하고, 없으면 `work claim-next`. 반환된 attempt/workspace로 실행한다. 외부 도구가 이미 공간을 만들었다면 그 공간에서 `--workspace current`로 선점한다.
+1. 빈 worker 슬롯: `work next`(수정 요청 우선, 없으면 다음 단위). lane 배정은 submit이 다음 `taskId`를 돌려주는 동안 같은 공간에서 이어 실행한다. 반환된 attempt/workspace로 실행한다. 외부 도구가 이미 공간을 만들었다면 그 공간에서 `--workspace current`로 선점한다.
 2. worker 완료 알림: 알림의 dispatch↔attempt 매핑을 확인하고 `work submit` 실행. 실행 완료 메시지를 태스크 done으로 취급하지 않는다.
 3. 빈 reviewer 슬롯: `work review-claim`으로 제출물을 확보하고 반환된 고정 workspace에서 review-task를 실행한다.
-4. reviewer 완료: 정확한 review ID로 `work review-finish`. approved만 `work integrate`로 통합한다. 상위 기준이 바뀌어 거부되면 새로운 review ID로 재검토한다.
+4. reviewer 완료: 정확한 review ID로 `work review-finish`. approved만 `work integrate`로 통합하고, 모든 단위가 통합되면 `work finish`로 묶음 검증을 한 번 실행한다. 상위 기준이 바뀌어 거부되면 새로운 review ID로 재검토한다.
 5. 매 완료 시 board를 다시 읽고 빈 슬롯을 채운다. 알림은 중복될 수 있으므로 runtime의 attempt/review 상태로 이미 처리한 결과를 확인한다. 재시작 후에도 runtime을 먼저 읽는다.
 
 Orca의 task/dispatch ID는 실행 추적용으로 매핑한다. 의존성 충족·선점·승인·통합 여부를 두 시스템에서 독립적으로 결정하지 않는다. 원격 실행기는 파일을 공유하지 않는 다른 clone을 같은 로컬 그룹에 연결할 수 없다.

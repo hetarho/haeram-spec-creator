@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { git } from './workspace.mjs'
 import { readRuntime, transaction } from './work-runtime.mjs'
 import { workInternals } from './work-groups.mjs'
-import { workLimits, invalidateReview, workerBusy } from './work-policy.mjs'
+import { workLimits, invalidateReview, workerBusy, unitTasks } from './work-policy.mjs'
 
 const { repository, groupOf, attemptOf, noOperation, destination, requireClean, checkWorker, head, now, fail } = workInternals
 
@@ -30,7 +30,7 @@ export async function claimReview(options) {
       .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt) || a.id.localeCompare(b.id))[0]
     if (!attempt) return { idle: true, reason: 'no-reviewable-submission' }
     if (!attempt.verifiedCommit || !attempt.submissionId) fail('새 프로토콜로 submit한 제출물이 필요합니다.')
-    const review = { id, attempt: attempt.id, group: group.id, owner: options.owner, status: 'reviewing',
+    const review = { id, attempt: attempt.id, tasks: unitTasks(attempt), group: group.id, owner: options.owner, status: 'reviewing',
       submissionId: attempt.submissionId, commit: attempt.verifiedCommit, baseCommit, workspace, createdAt: now(), heartbeatAt: now() }
     attempt.status = 'reviewing'
     attempt.review = review

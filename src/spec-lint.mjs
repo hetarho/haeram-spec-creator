@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST } from './spec-format.mjs'
 import { touchesErrors } from './work-policy.mjs'
-import { dependencyErrors } from './task-graph.mjs'
+import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
 const DOMAIN_ID = /^[A-Z]{2,6}$/
 const DOC_ST = /^(open|ready|converted)@\d{6}$/ // ideation · review
@@ -292,6 +292,7 @@ export async function lintSpec({ targetRoot } = {}) {
   const taskIds = new Set(taskRows.map((row) => row[0]))
   if (taskIds.size !== taskRows.length) errors.push('STATE tasks 표에 중복된 task ID가 있습니다.')
   const taskGraph = new Map()
+  const taskLanes = new Map()
   const activeBaseByDomain = new Map()
   const fileByTaskId = new Map()
   for (const file of (await listIfExists(path.join(specRoot, 'tasks'))).filter((f) => f.endsWith('.md'))) {
@@ -357,6 +358,7 @@ export async function lintSpec({ targetRoot } = {}) {
     for (const value of touchesErrors(fields.get('touches'))) errors.push(`${file}: touches 경로 형식 오류: ${value}`)
     const deps = splitRefs(fields.get('dep'))
     taskGraph.set(id, deps)
+    taskLanes.set(id, laneValue(fields.get('lane')))
     if ([...new Set(deps)].sort().join(' ') !== [...new Set(splitRefs(depCell))].sort().join(' ')) {
       warnings.push(`${id}: 파일 dep과 STATE dep이 다릅니다 — 두 문서의 의존성을 일치시키세요.`)
     }
@@ -402,6 +404,7 @@ export async function lintSpec({ targetRoot } = {}) {
     if (!taskIds.has(id)) errors.push(`tasks/${file}이 STATE tasks 표에 없습니다.`)
   }
   errors.push(...dependencyErrors(taskGraph, doneIds))
+  errors.push(...laneErrors(taskLanes, taskGraph))
   // Both legacy STATE and task files may be read by clients during migration.
   // Reject a cycle in either view, without duplicating identical diagnostics.
   const stateGraph = new Map(taskRows.map(([id, , , deps]) => [id, splitRefs(deps)]))

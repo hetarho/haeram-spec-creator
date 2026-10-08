@@ -220,7 +220,8 @@ npx haeram-spec-creator work claim T042 --work login --owner agent-a --json
 # 워커는 코드와 자기 태스크의 acceptance/result를 작성하고 커밋
 # 실제 실행 ID를 변수에 넣은 뒤 검증·제출 (예: npm 프로젝트)
 ATTEMPT_ID='claim이 반환한 id'
-npx haeram-spec-creator work submit --attempt "$ATTEMPT_ID" --verify 'npm test' --json
+# --verify는 선택: 이 태스크가 추가·영향을 준 테스트만 (전체 스위트는 integrate/finish가 실행)
+npx haeram-spec-creator work submit --attempt "$ATTEMPT_ID" --verify 'npx vitest run src/login' --json
 
 # 리뷰어가 고정된 제출물을 선점하고 review-task로 검토
 npx haeram-spec-creator work review-claim --work login --attempt "$ATTEMPT_ID" --owner reviewer --json
@@ -232,6 +233,9 @@ npx haeram-spec-creator work review-finish --review "$REVIEW_ID" --result-file /
 # 후보 worktree에는 의존성이 없으므로 필요한 설치도 명시
 npx haeram-spec-creator work integrate --attempt "$ATTEMPT_ID" --verify 'npm ci && npm test' --json
 
+# 모든 단위가 통합되면 묶음 전체 검증을 한 번 실행하고 검증 커밋을 기록
+npx haeram-spec-creator work finish --work login --verify 'npm ci && npm run ci' --json
+
 # 작업자가 종료한 뒤 공간 정리
 npx haeram-spec-creator work cleanup --attempt "$ATTEMPT_ID" --json
 ```
@@ -240,7 +244,7 @@ npx haeram-spec-creator work cleanup --attempt "$ATTEMPT_ID" --json
 
 진행 중 기록과 상태 변화 이력은 `<git-common-dir>/haeram/v1/state.json`에 저장됩니다. 같은 clone의 worktree들이 공유하고 runtime 자체는 Git에 커밋하지 않습니다. 태스크 통합과 실행기 종료 시 `spec/work/<묶음>.json` 상세 기록 및 `STATE.md`의 작업 묶음 요약을 Git에 저장합니다. CLI는 원자적 예약으로 동일 태스크 및 동일 작업 공간의 이중 배정을 막습니다. 워커는 STATE·SSOT를 바꾸지 않으며, 기획 변경·채번은 하나의 기획 공간에서 진행합니다.
 
-검증 명령은 사용자가 지정한 `--verify`를 셸에서 순서대로 실행합니다(여러 번 지정 가능, 명령별 15분 제한). ARCH에 정의된 실제 검사와 필요한 환경 준비를 넣어야 합니다. 워커 HEAD가 변경되거나 검사가 미커밋 변경을 만들면 제출이 실패합니다. 통합은 별도 후보에서 수행하며, 충돌·검증 실패·상위 브랜치 이동이 있으면 후보를 보존합니다. 검증은 지정한 명령의 성공을 보장하며, 어떤 테스트가 충분한지는 프로젝트의 acceptance/ARCH가 정합니다.
+검증 명령은 사용자가 지정한 `--verify`를 셸에서 순서대로 실행합니다(여러 번 지정 가능, 명령별 기본 1시간 제한, `--verify-timeout-ms`로 변경). ARCH에 정의된 실제 검사와 필요한 환경 준비를 넣어야 합니다. 워커 HEAD가 변경되거나 검사가 미커밋 변경을 만들면 제출이 실패합니다. 통합은 별도 후보에서 수행하며, 충돌·검증 실패·상위 브랜치 이동이 있으면 후보를 보존합니다. 검증은 지정한 명령의 성공을 보장하며, 어떤 테스트가 충분한지는 프로젝트의 acceptance/ARCH가 정합니다.
 
 중단·정리 명령도 제공합니다.
 
@@ -262,26 +266,42 @@ npx haeram-spec-creator work --help
 
 지원 범위는 같은 로컬 clone입니다. 다른 clone·호스트의 공유 선점, fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 기본 실행기 또는 command 어댑터로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 다른 clone에도 Git에 저장된 태스크·실행 이력 체크포인트가 남지만 현재 프로세스·선점 소유권과 명령 출력 로그는 전파되지 않습니다.
 
+### 줄기(lane)로 나누고 단계별로 검증하기
+
+병렬 묶음은 **기반 → 줄기 → 통합**으로 분해합니다. 여러 줄기가 함께 쓰는 공통 계약을 기반 태스크로 먼저 만들고, 독립적인 흐름은 태스크 인용줄에 `lane:<이름>`을 붙여 줄기로 묶고, 줄기 결과를 잇는 태스크는 lane 없이 각 줄기에 dep을 겁니다.
+
+```text
+T001 (기반) → lane:a [T002 → T003 → T004]
+            → lane:b [T005 → T006 → T007]  → T011 (통합)
+            → lane:c [T008 → T009 → T010]
+```
+
+- 줄기 하나가 배정·리뷰·통합의 단위입니다. 한 작업자가 한 worktree에서 줄기의 태스크를 순서대로 구현하며, 줄기 안의 dep은 통합을 기다리지 않습니다. 중간 태스크의 `submit`은 같은 공간에 다음 `taskId`를 돌려주고, 마지막 태스크의 submit이 리뷰 대기(`ready`)입니다.
+- 줄기는 바깥 dep이 모두 통합된 뒤에만 시작하므로 줄기 도중에 다른 줄기를 기다리며 멈추지 않습니다. 두 줄기가 서로의 태스크를 기다리면(T009(c)→T005(b), T006(b)→T009(c)) `lint`와 `work board`가 `lane 순환` 오류를 내고 배정을 거부합니다. 공통 선행은 기반으로, 소비 태스크는 통합 단계로 옮기거나 줄기를 합칩니다.
+- 검증은 세 단계입니다. **태스크**: 워커가 그 태스크가 추가·수정·영향을 준 테스트만 실행합니다(`submit --verify`는 선택). **단위**: `integrate --verify`가 줄기마다 전체 테스트를 한 번 실행합니다. **묶음**: `finish --verify`가 모든 통합 뒤 최종 검증을 한 번 실행합니다.
+- 실행기 없이 여러 세션을 띄울 때는 세션이 일이 없다고 끝나지 않도록 `work next --work <묶음> --owner <이름> --wait 540`을 사용합니다. 수정 요청 → 다음 단위 순으로 배정하고, 받을 일이 없으면 모델 호출 없이 기다립니다. `complete`(남은 일 없음)·`stalled`(blocked만 남아 사람이 풀어야 함)·`timeout`(다시 호출)으로 반환합니다. 리뷰 세션은 `review-claim --wait`를 씁니다.
+
 설계 배경은 [협업 설계 검토](https://github.com/hetarho/haeram-spec-creator/blob/main/docs/worktree-collaboration-review.md)에 기록합니다.
 
 ## 워커 4개와 리뷰어 1개로 대기 작업 계속 처리하기
 
-`STATE.next`는 사람이 재개할 때 볼 안내입니다. 개별 에이전트의 배정은 공유 runtime이 관리합니다. `claim-next`는 의존성이 충족된 작업 중 후속 작업을 많이 여는 태스크, 오래된 ID 순으로 하나를 선택하고 원자적으로 선점합니다. 동시에 요청해도 같은 태스크를 배정하지 않습니다.
+`STATE.next`는 사람이 재개할 때 볼 안내입니다. 개별 에이전트의 배정은 공유 runtime이 관리합니다. `claim-next`는 의존성이 충족된 단위(줄기 하나 또는 lane 없는 태스크 하나) 중 후속 작업을 많이 여는 단위, 오래된 ID 순으로 하나를 선택하고 원자적으로 선점합니다. 동시에 요청해도 같은 태스크를 배정하지 않습니다. `next`는 resume과 claim-next를 합치고 `--wait`로 대기할 수 있습니다.
 
 ```bash
 npx haeram-spec-creator work start feature --workers 4 --reviewers 1 --max-pending 8 --json
 npx haeram-spec-creator work claim-next --work feature --owner worker-a --json
 npx haeram-spec-creator work resume --work feature --owner worker-a --json
+npx haeram-spec-creator work next --work feature --owner worker-a --wait 540 --json
 ```
 
 수정 요청이 있으면 resume로 먼저 처리합니다. 리뷰 대기가 max-pending에 도달하면 새 배정을 멈춥니다. 태스크 인용줄에 선택 필드 `touches:src/auth/ prisma/schema.prisma`를 적으면 겹치는 영역은 통합/해제될 때까지 직렬화합니다. 생략은 영향 범위가 알려지지 않았다는 뜻입니다. claimable은 보드의 후보 표시이며, 실제 배정은 용량·적체·신선도를 다시 검사합니다.
 
-`work run`은 설치된 Codex·Claude CLI로 빈 워커 슬롯 보충, 완료 후 검증·리뷰, 수정 재배정, 승인 후 직렬 통합까지 수행합니다. 작업자와 리뷰어의 도구를 다르게 지정할 수 있습니다.
+`work run`은 설치된 Codex·Claude CLI로 빈 워커 슬롯 보충, 줄기의 다음 태스크를 같은 공간에 이어 배정, 완료 후 검증·리뷰, 수정 재배정, 승인 후 직렬 통합, 묶음 완료 검증까지 수행합니다. `--task-verify`(선택, 태스크마다 빠른 검사)·`--verify`(단위 통합마다 전체 테스트)·`--group-verify`(선택, 마지막에 한 번)로 단계를 나눕니다. 작업자와 리뷰어의 도구를 다르게 지정할 수 있습니다.
 
 ```bash
 npx haeram-spec-creator work doctor --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --dry-run --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --verify 'npm ci && npm test' --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --dry-run --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --json
 ```
 
 doctor와 dry-run은 모델을 호출하지 않습니다. provider를 생략하면 호환되는 Codex, Claude 순으로 선택하며, reviewer-provider를 생략하면 같은 도구를 사용합니다. 모델은 각 CLI 기본 설정을 사용하거나 `--model`·`--reviewer-model`로 지정합니다. CLI 로그인과 모델 접근 권한은 별도 준비가 필요합니다. 기본 어댑터의 워커는 파일을 편집하고, 호스트가 계약·변경 범위를 검사한 뒤 커밋·검증·제출합니다.
@@ -298,7 +318,7 @@ npx haeram-spec-creator work run --work feature --providers codex,claude --verif
 
 혼합 목록은 슬롯에 반복 배정합니다. `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개와 Claude 4개가 됩니다. 모델을 생략하면 각 CLI의 설정을 사용하며, 도구별 모델은 [adapter workers 설정](skills/manage-work/references/runner.md#단일-도구와-혼합-워커)에 지정합니다. 리뷰어는 워커 6개와 별도로 실행됩니다.
 
-태스크를 미리 5개씩 묶지 않고 빈 슬롯이 다음 가능한 태스크를 가져갑니다. 작업 시간 차이로 일부 슬롯이 더 많은 일을 처리할 수 있고, 의존성·예상 변경 경로·리뷰 적체 때문에 동시 실행 수가 줄어들 수 있습니다.
+태스크를 미리 5개씩 묶지 않고 빈 슬롯이 다음 가능한 단위(lane이면 줄기 전체)를 가져갑니다. 작업 시간 차이로 일부 슬롯이 더 많은 일을 처리할 수 있고, 의존성·예상 변경 경로·리뷰 적체 때문에 동시 실행 수가 줄어들 수 있습니다.
 
 ```sh
 npx haeram-spec-creator work board --work feature --json

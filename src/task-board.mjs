@@ -3,7 +3,7 @@ import path from 'node:path'
 import { inspectWorkspace, git } from './workspace.mjs'
 import { quoteLine, quoteFields, sections, tableRows, splitRefs, TASK_ID, TASK_ST } from './spec-format.mjs'
 import { touchesErrors } from './work-policy.mjs'
-import { dependencyErrors } from './task-graph.mjs'
+import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
 async function optionalRead(file) {
   try { return await readFile(file, 'utf8') } catch (error) {
@@ -54,6 +54,7 @@ export async function readTaskBoard(options = {}) {
   }
   const tasks = []
   const graph = new Map()
+  const lanes = new Map()
   for (const file of files) {
     const id = file.split('.')[0]
     const content = await read(`spec/tasks/${file}`) ?? ''
@@ -70,13 +71,16 @@ export async function readTaskBoard(options = {}) {
     if (doneIds.has(id)) errors.push(`${id}: tasks/와 tasks/done/에 파일이 모두 있습니다.`)
     for (const value of touchesErrors(fields.get('touches'))) errors.push(`${file}: touches 경로 형식 오류: ${value}`)
     const deps = splitRefs(fields.get('dep'))
+    const lane = laneValue(fields.get('lane'))
     graph.set(id, deps)
+    lanes.set(id, lane)
     tasks.push({ id, title: title?.[2] ?? id, file: `spec/tasks/${file}`, st,
       ssot: splitRefs(fields.get('ssot')), base: splitRefs(fields.get('base')),
-      touches: splitRefs(fields.get('touches')), deps, waitingOn: deps.filter((dep) => !doneIds.has(dep)), dependencyReady: false,
+      touches: splitRefs(fields.get('touches')), lane, deps, waitingOn: deps.filter((dep) => !doneIds.has(dep)), dependencyReady: false,
     })
   }
   errors.push(...dependencyErrors(graph, doneIds))
+  errors.push(...laneErrors(lanes, graph))
   const state = await read('spec/STATE.md')
   if (state === null) warnings.push('spec/STATE.md가 없습니다. 태스크 파일만 표시합니다.')
   else {

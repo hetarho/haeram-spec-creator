@@ -11,10 +11,11 @@ import { quoteLine, quoteFields, sections, splitRefs, TASK_ID } from './spec-for
 import { runtimeRoot, readRuntime, transaction, readLock, unlockRuntime, canonicalDestination } from './work-runtime.mjs'
 import { SkillPackageError } from './errors.mjs'
 import { lintSpec } from './spec-lint.mjs'
-import { progressSnapshot, progressState, workSummary } from './work-progress.mjs'
+import { progressSnapshot, progressState, workSummary, progressChecks } from './work-progress.mjs'
+import { planUnits } from './task-graph.mjs'
 
 const execute = promisify(exec)
-import { activeAttempt as active, workerBusy, pendingReview, workLimits, invalidateReview, overlaps, rankedTasks } from './work-policy.mjs'
+import { activeAttempt as active, workerBusy, pendingReview, workLimits, invalidateReview, overlaps, rankedUnits, unitTasks } from './work-policy.mjs'
 const now = () => new Date().toISOString()
 const date = () => now().slice(2, 10).replaceAll('-', '')
 const creator = () => ({ pid: process.pid, host: os.hostname() })
@@ -96,39 +97,51 @@ function taskContract(content) {
     acceptance: map.get('acceptance')?.map((row) => row.replace(/^- \[v\]/, '- [ ]')) }))
 }
 
-async function currentTask(context, group, taskId, snapshot) {
+// A unit starts only when every dep outside it is integrated. Deps inside a lane are
+// implemented in order in the same workspace and never wait for integration.
+async function currentUnit(context, group, ids, snapshot) {
   const commit = snapshot?.commit ?? await head(context.cwd, `refs/heads/${group.branch}`)
   const board = snapshot?.board ?? await readTaskBoard({ targetRoot: context.cwd, ref: commit })
   if (!board.ok || board.warnings.length) fail('상위 브랜치의 태스크/STATE를 먼저 정리하고 커밋하세요.', [...board.errors, ...board.warnings])
-  const task = board.tasks.find((item) => item.id === taskId)
-  if (!task?.dependencyReady) fail(`${taskId}: todo 상태이며 상위 브랜치에서 dep이 충족된 태스크만 배정할 수 있습니다.`)
-  for (const base of task.base) {
-    const parsed = base.match(/^([A-Z]{2,6})@(\d+)$/)
-    if (!parsed) fail(`${taskId}: 잘못된 SSOT base: ${base}`)
-    const ssot = await blob(context.cwd, commit, `spec/ssot/${parsed[1]}.md`)
-    const revision = quoteLine(ssot ?? '')?.match(/^r(\d+)\b/)?.[1]
-    if (revision !== parsed[2]) fail(`${taskId}: ${base}가 현재 SSOT와 다릅니다. 기획 공간에서 신선도를 확인하고 태스크를 갱신하세요.`)
+  const tasks = ids.map((id) => board.tasks.find((item) => item.id === id))
+  if (tasks.some((task) => task?.st !== 'todo')) fail(`${ids.join(' ')}: todo 상태이며 상위 브랜치에서 dep이 충족된 태스크만 배정할 수 있습니다.`)
+  const waiting = [...new Set(tasks.flatMap((task) => task.waitingOn.filter((dep) => !ids.includes(dep))))]
+  if (waiting.length) fail(`${ids.join(' ')}: dep ${waiting.join(' ')}이 상위 브랜치에 아직 통합되지 않았습니다.`)
+  for (const task of tasks) {
+    for (const base of task.base) {
+      const parsed = base.match(/^([A-Z]{2,6})@(\d+)$/)
+      if (!parsed) fail(`${task.id}: 잘못된 SSOT base: ${base}`)
+      const ssot = await blob(context.cwd, commit, `spec/ssot/${parsed[1]}.md`)
+      const revision = quoteLine(ssot ?? '')?.match(/^r(\d+)\b/)?.[1]
+      if (revision !== parsed[2]) fail(`${task.id}: ${base}가 현재 SSOT와 다릅니다. 기획 공간에서 신선도를 확인하고 태스크를 갱신하세요.`)
+    }
   }
-  return { commit, task, content: await blob(context.cwd, commit, task.file) }
+  return { commit, board, tasks: await Promise.all(tasks.map(async (task) => ({ task, content: await blob(context.cwd, commit, task.file) }))) }
 }
 
+// Tasks before and including the attempt's current task must be complete; later lane
+// tasks only have to keep their contract.
 async function checkWorker(context, group, attempt, workingTree = false) {
   const workspace = await assertWorkspace(context, attempt)
   if (workingTree) await requireNoGitOperation(attempt.workspace)
   else await requireClean(attempt.workspace)
-  const current = await currentTask(context, group, attempt.taskId)
-  const read = (file) => workingTree ? readFile(path.join(attempt.workspace, file), 'utf8') : blob(context.cwd, workspace.git.head, file)
-  const content = await read(current.task.file)
-  if (!content || taskContract(content) !== taskContract(current.content)) fail('태스크 계약이 상위 브랜치와 다릅니다. 기획 변경을 확인하고 작업을 동기화하세요.')
-  const acceptance = sections(content).get('acceptance') ?? []
-  if (!acceptance.some((row) => /^- \[v\] /.test(row)) || acceptance.some((row) => /^- \[[^v]\]/.test(row))) fail('태스크 acceptance를 실제로 확인하고 모두 [v]로 기록하세요.')
-  const result = (sections(content).get('result') ?? []).join('\n')
-  for (const key of ['outcome', 'at', 'verified', 'limits']) {
-    if (!new RegExp(`^- ${key}: .+`, 'm').test(result)) fail(`태스크 result에 ${key} 기록이 필요합니다.`)
+  const ids = unitTasks(attempt)
+  const position = ids.indexOf(attempt.taskId)
+  if (position === -1) fail('실행 기록의 현재 태스크가 배정 단위에 없습니다.')
+  const current = await currentUnit(context, group, ids)
+  const read = (file) => workingTree ? readFile(path.join(attempt.workspace, file), 'utf8').catch(() => null) : blob(context.cwd, workspace.git.head, file)
+  for (const [index, { task, content: upstream }] of current.tasks.entries()) {
+    const content = await read(task.file)
+    if (!content || taskContract(content) !== taskContract(upstream)) fail(`${task.id}: 태스크 계약이 상위 브랜치와 다릅니다. 기획 변경을 확인하고 작업을 동기화하세요.`)
+    if (index > position) continue
+    const acceptance = sections(content).get('acceptance') ?? []
+    if (!acceptance.some((row) => /^- \[v\] /.test(row)) || acceptance.some((row) => /^- \[[^v]\]/.test(row))) fail(`${task.id}: 태스크 acceptance를 실제로 확인하고 모두 [v]로 기록하세요.`)
+    const result = (sections(content).get('result') ?? []).join('\n')
+    for (const key of ['outcome', 'at', 'verified', 'limits']) {
+      if (!new RegExp(`^- ${key}: .+`, 'm').test(result)) fail(`${task.id}: 태스크 result에 ${key} 기록이 필요합니다.`)
+    }
   }
-  const refs = quoteFields(quoteLine(current.content) ?? '')
-  for (const base of splitRefs(refs.get('base'))) {
-    const domain = base.split('@')[0]
+  for (const domain of new Set(current.tasks.flatMap(({ task }) => task.base.map((base) => base.split('@')[0])))) {
     const file = `spec/ssot/${domain}.md`
     const canonical = await blob(context.cwd, current.commit, file)
     if (!canonical || canonical !== await read(file)) fail(`${domain}: 상위 브랜치의 SSOT가 달라졌습니다. 동기화 후 다시 검증하세요.`)
@@ -136,24 +149,33 @@ async function checkWorker(context, group, attempt, workingTree = false) {
   const common = (await git(context.cwd, ['merge-base', current.commit, workspace.git.head])).trim()
   const changes = (await git(workingTree ? attempt.workspace : context.cwd, ['diff', '--name-only', '-z', common, ...(workingTree ? [] : [workspace.git.head]), '--', 'spec/'])).split('\0').filter(Boolean)
   if (workingTree) changes.push(...(await git(attempt.workspace, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'spec/'])).split('\0').filter(Boolean))
-  if (changes.some((file) => file !== current.task.file)) fail('워커는 자신의 태스크 외 spec 문서를 변경할 수 없습니다. 기획 공간으로 인계하세요.', changes)
+  const own = new Set(current.tasks.map(({ task }) => task.file))
+  if (changes.some((file) => !own.has(file))) fail('워커는 자신의 태스크 외 spec 문서를 변경할 수 없습니다. 기획 공간으로 인계하세요.', changes)
   return { ...current, workerCommit: workspace.git.head }
 }
 
-function commands(options) {
-  const values = options.verify ?? []
+function commands(options, key = 'verify', optional = false) {
+  const values = options[key] ?? []
+  if (optional && Array.isArray(values) && !values.length) return []
   if (!Array.isArray(values) || !values.length || values.some((value) => typeof value !== 'string' || !value.trim())) {
-    fail('실행할 검증 명령을 --verify로 지정하세요. 여러 번 지정할 수 있습니다.')
+    fail(`실행할 검증 명령을 --${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}로 지정하세요. 여러 번 지정할 수 있습니다.`)
   }
   return values
 }
 
-async function verify(root, checks, commit, signal) {
+// Full suites run at unit integration and group finish, so a single check may be long.
+function verifyTimeout(options) {
+  const value = Number(options.verifyTimeoutMs ?? 60 * 60 * 1000)
+  if (!Number.isSafeInteger(value) || value < 1) fail('verify-timeout-ms: 양의 정수가 필요합니다.')
+  return value
+}
+
+async function verify(root, checks, commit, signal, timeout = 60 * 60 * 1000) {
   const results = []
   for (const command of checks) {
     const startedAt = now()
     try {
-      const { stdout, stderr } = await execute(command, { cwd: root, maxBuffer: 8 * 1024 * 1024, timeout: 15 * 60 * 1000, signal })
+      const { stdout, stderr } = await execute(command, { cwd: root, maxBuffer: 8 * 1024 * 1024, timeout, signal })
       results.push({ command, startedAt, finishedAt: now(), stdout: stdout.slice(-16000), stderr: stderr.slice(-16000) })
     } catch (error) {
       fail(`검증 실패: ${command}`, [(error.stderr || error.stdout || error.message).slice(-16000)])
@@ -233,15 +255,17 @@ async function claimTask(options, next = false) {
   const board = await readTaskBoard({ targetRoot: context.cwd, ref: commit })
   if (!board.ok || board.warnings.length) fail('상위 브랜치의 태스크/STATE를 먼저 정리하고 커밋하세요.', [...board.errors, ...board.warnings])
   // Read/validate immutable task snapshots before the short allocation transaction.
+  const claimed = new Set(Object.values(initial.attempts).filter(active).flatMap(unitTasks))
+  const units = rankedUnits(planUnits(board.tasks, board.doneIds, claimed), board.tasks)
   const candidates = []
   const skipped = []
-  for (const task of rankedTasks(board.tasks).filter((task) => next ? task.dependencyReady : task.id === options.task)) {
-    try { candidates.push(await currentTask(context, group, task.id, { commit, board })) } catch (error) {
+  for (const unit of units.filter((entry) => next ? entry.ready : entry.ids.includes(options.task))) {
+    try { candidates.push({ unit, ...await currentUnit(context, group, unit.ids, { commit, board }) }) } catch (error) {
       if (!next) throw error
-      skipped.push({ task: task.id, reason: error.message })
+      skipped.push({ task: unit.ids.join(' '), reason: error.message })
     }
   }
-  if (!next && !candidates.length) fail(`${options.task}: todo 상태이며 상위 브랜치에서 dep이 충족된 태스크만 배정할 수 있습니다.`)
+  if (!next && !candidates.length) fail(`${options.task}: 다른 실행이 이미 선점했거나 todo 태스크가 아닙니다.`)
   const mode = options.workspace ?? 'auto'
   if (!['auto', 'current', 'new'].includes(mode)) fail('workspace는 auto, current, new 중 하나여야 합니다.')
   const bound = Object.values(initial.attempts).some((entry) => entry.workspace === context.cwd && !entry.cleanedAt)
@@ -254,7 +278,7 @@ async function claimTask(options, next = false) {
   const id = randomUUID()
   const owner = options.owner ?? 'agent'
   const prepared = await Promise.all(candidates.map(async (current) => ({ current,
-    target: adopted ? context.cwd : await destination(context, `${group.id}-${current.task.id}-${id.slice(0, 8)}`, options.path),
+    target: adopted ? context.cwd : await destination(context, `${group.id}-${current.unit.lane ?? current.unit.ids[0]}-${id.slice(0, 8)}`, options.path),
   })))
   const selected = await transaction(context.root, async (state) => {
     const live = groupOf(state, group.id)
@@ -269,13 +293,13 @@ async function claimTask(options, next = false) {
     if (local.some((entry) => entry.status === 'changes_requested')) return idle('changes-requested; resume corrections first')
     if (local.filter(pendingReview).length >= limits.maxPending) return idle('review-backpressure')
     const available = prepared.find(({ current }) => !all.some((entry) => active(entry) &&
-      (entry.taskId === current.task.id || overlaps(current.task.touches, entry.touches))))
+      (unitTasks(entry).some((taskId) => current.unit.ids.includes(taskId)) || overlaps(current.unit.touches, entry.touches))))
     if (!available) return idle(next ? 'no-eligible-task' : `${options.task}: 다른 실행이 이미 선점했거나 touches 영역을 사용 중입니다.`)
-    const { current, target } = available
+    const { current: { unit }, target } = available
     assertFreeWorkspace(state, target)
-    const branch = adopted ? context.workspace.git.branch : `task/${group.id}/${current.task.id}-${id.slice(0, 8)}`
-    const attempt = { id, group: group.id, taskId: current.task.id, owner, contributors: [owner], workspace: target,
-      branch, managed: !adopted, startCommit: commit, touches: current.task.touches, status: 'preparing', creator: creator(), createdAt: now(), heartbeatAt: now() }
+    const branch = adopted ? context.workspace.git.branch : unit.lane ? `lane/${group.id}/${unit.lane}-${id.slice(0, 8)}` : `task/${group.id}/${unit.ids[0]}-${id.slice(0, 8)}`
+    const attempt = { id, group: group.id, taskId: unit.ids[0], tasks: unit.ids, lane: unit.lane, owner, contributors: [owner], workspace: target,
+      branch, managed: !adopted, startCommit: commit, touches: unit.touches, status: 'preparing', creator: creator(), createdAt: now(), heartbeatAt: now() }
     state.attempts[id] = attempt
     return attempt
   })
@@ -381,19 +405,32 @@ export async function commitWorkerWork(options) {
   }
 }
 
+// Task-level checks are optional: the worker runs the tests its change touches, while
+// full suites belong to unit integration and group finish.
 export async function submitWork(options) {
-  const checks = commands(options)
+  const checks = commands(options, 'verify', true)
+  const timeout = verifyTimeout(options)
   const context = await repository(options)
   const reservation = await reserve(context, options.attempt, 'verifying', ['doing', 'blocked', 'ready', 'approved', 'changes_requested'])
   try {
     const current = await checkWorker(context, reservation.group, reservation.attempt)
-    const verification = await verify(reservation.attempt.workspace, checks, current.workerCommit, options.signal)
+    const verification = await verify(reservation.attempt.workspace, checks, current.workerCommit, options.signal, timeout)
     await assertWorkspace(context, reservation.attempt)
     if (await head(context.cwd, `refs/heads/${reservation.group.branch}`) !== current.commit) fail('검증 중 상위 브랜치가 변경됐습니다. 최신 기준을 확인하고 다시 제출하세요.')
     options.signal?.throwIfAborted()
+    const ids = unitTasks(reservation.attempt)
+    const position = ids.indexOf(reservation.attempt.taskId)
+    const step = { taskId: reservation.attempt.taskId, commit: current.workerCommit, verification: progressChecks(verification), at: now() }
+    const steps = (attempt) => [...(attempt.steps ?? []).filter((entry) => entry.taskId !== step.taskId), step]
+    if (position < ids.length - 1) {
+      // A lane step hands the same workspace its next task without waiting for review.
+      return await finishOperation(context, reservation, (attempt) => Object.assign(attempt, {
+        status: 'doing', taskId: ids[position + 1], steps: steps(attempt), reason: null,
+      }))
+    }
     await git(context.cwd, ['update-ref', `refs/haeram/attempts/${reservation.attempt.id}`, current.workerCommit])
     return await finishOperation(context, reservation, (attempt) => Object.assign(attempt, {
-      status: 'ready', submissionId: randomUUID(), verifiedCommit: current.workerCommit, submittedBase: current.commit, verification, submittedAt: now(), reason: null,
+      status: 'ready', submissionId: randomUUID(), verifiedCommit: current.workerCommit, submittedBase: current.commit, verification, steps: steps(attempt), submittedAt: now(), reason: null,
     }))
   } catch (error) {
     await finishOperation(context, reservation, (attempt) => Object.assign(attempt, { status: 'blocked', reason: error.message }))
@@ -401,29 +438,38 @@ export async function submitWork(options) {
   }
 }
 
-async function archiveTask(root, task, worker, verification) {
-  const file = path.join(root, task.file)
-  let content = await readFile(file, 'utf8')
-  content = content.replace(/^> st:[^|]+\|/m, `> st:done@${date()} |`)
-  content = content.replace(/^- at:.*$/m, `- at: ${worker}`)
-  // Store the checks actually executed by submit, independent of the worker's wording.
-  content = content.replace(/^- verified:.*$/m, () => `- verified: ${verification.map((entry) => JSON.stringify(entry.command)).join('; ')}`)
-  await writeFile(file, content)
-  const archive = path.join(root, 'spec', 'tasks', 'done', path.basename(file))
-  try { await access(archive, constants.F_OK); fail('완료 아카이브 파일이 이미 있습니다.', [archive]) } catch (error) { if (error.code !== 'ENOENT') throw error }
-  await mkdir(path.dirname(archive), { recursive: true })
-  await rename(file, archive)
+async function archiveTasks(root, tasks, attempt, integration) {
+  const steps = new Map((attempt.steps ?? []).map((step) => [step.taskId, step]))
+  const quoted = (entries) => entries.map((entry) => JSON.stringify(entry.command ?? entry)).join('; ')
+  for (const task of tasks) {
+    const step = steps.get(task.id) ?? { commit: attempt.verifiedCommit, verification: attempt.verification ?? [] }
+    const file = path.join(root, task.file)
+    let content = await readFile(file, 'utf8')
+    content = content.replace(/^> st:[^|]+\|/m, `> st:done@${date()} |`)
+    content = content.replace(/^- at:.*$/m, `- at: ${step.commit}`)
+    // Host-executed checks replace the worker's wording; without them the worker's own
+    // impact-selected checks stay, followed by the unit integration checks.
+    content = content.replace(/^- verified:(.*)$/m, (_, worker) => `- verified: ${[step.verification.length ? quoted(step.verification) : worker.trim(),
+      integration.length ? `integration ${quoted(integration)}` : null].filter(Boolean).join('; ')}`)
+    await writeFile(file, content)
+    const archive = path.join(root, 'spec', 'tasks', 'done', path.basename(file))
+    try { await access(archive, constants.F_OK); fail('완료 아카이브 파일이 이미 있습니다.', [archive]) } catch (error) { if (error.code !== 'ENOENT') throw error }
+    await mkdir(path.dirname(archive), { recursive: true })
+    await rename(file, archive)
+  }
+  const ids = tasks.map((task) => task.id)
   const statePath = path.join(root, 'spec', 'STATE.md')
   const state = await readFile(statePath, 'utf8')
   let section = null
-  let removed = false
+  const removed = new Set()
   const rows = state.split(/\r?\n/).filter((row) => {
     if (row.startsWith('## ')) section = row.slice(3).trim()
-    if (section === 'tasks' && new RegExp(`^\\|\\s*${task.id}\\s*\\|`).test(row)) { removed = true; return false }
+    const id = section === 'tasks' && row.match(/^\|\s*(T\d{3,})\s*\|/)?.[1]
+    if (id && ids.includes(id)) { removed.add(id); return false }
     return true
   })
-  if (!removed) fail('STATE에서 완료 처리할 태스크 행을 찾지 못했습니다.')
-  let next = rows.join('\n').replace(/(## log\s*\n)/, `$1- ${date()} ${task.id} integrated\n`)
+  if (removed.size !== ids.length) fail('STATE에서 완료 처리할 태스크 행을 찾지 못했습니다.', ids.filter((id) => !removed.has(id)))
+  let next = rows.join('\n').replace(/(## log\s*\n)/, `$1- ${date()} ${ids.join(' ')} integrated\n`)
   next = next.replace(/## next\n[\s\S]*?(?=\n## |$)/, '## next\n- inspect work board for remaining tasks\n')
   const log = next.indexOf('## log\n')
   if (log !== -1) next = next.slice(0, log) + '## log\n' + next.slice(log + 7).split('\n').filter((row) => row.startsWith('- ')).slice(0, 20).join('\n') + '\n'
@@ -432,6 +478,7 @@ async function archiveTask(root, task, worker, verification) {
 
 export async function integrateWork(options) {
   const checks = commands(options)
+  const timeout = verifyTimeout(options)
   const context = await repository(options)
   const reservation = await reserve(context, options.attempt, 'integrating', ['approved'])
   const { attempt, group } = reservation
@@ -455,16 +502,17 @@ export async function integrateWork(options) {
     })
     await git(context.cwd, ['worktree', 'add', '--detach', candidate, current.commit])
     await git(candidate, ['merge', '--no-ff', '--no-commit', attempt.verifiedCommit])
-    await archiveTask(candidate, current.task, attempt.verifiedCommit, attempt.verification)
+    const tasks = current.tasks.map((entry) => entry.task)
+    await archiveTasks(candidate, tasks, attempt, checks)
     const progress = await readRuntime(context.root)
     Object.assign(progress.attempts[attempt.id], { status: 'integrated', reason: null })
     const historyFile = await writeProgress(candidate, group, progress, current.commit)
     const spec = await lintSpec({ targetRoot: candidate })
     if (!spec.ok || spec.warnings.length) fail('통합 후보의 spec 검증에 실패했습니다.', [...spec.errors, ...spec.warnings])
-    await git(candidate, ['add', '--', 'spec/STATE.md', historyFile, current.task.file, `spec/tasks/done/${path.basename(current.task.file)}`])
-    await git(candidate, ['commit', '-m', `Integrate ${attempt.taskId} into ${group.id}`])
+    await git(candidate, ['add', '--', 'spec/STATE.md', historyFile, ...tasks.flatMap((task) => [task.file, `spec/tasks/done/${path.basename(task.file)}`])])
+    await git(candidate, ['commit', '-m', `Integrate ${attempt.lane ? `lane ${attempt.lane} (${tasks.map((task) => task.id).join(' ')})` : attempt.taskId} into ${group.id}`])
     const candidateCommit = await head(candidate)
-    const verification = await verify(candidate, checks, candidateCommit, options.signal)
+    const verification = await verify(candidate, checks, candidateCommit, options.signal, timeout)
     await assertWorkspace(context, group)
     await requireClean(group.path)
     if (await head(group.path) !== current.commit) fail('검증 중 상위 브랜치가 이동했습니다. 새 기준으로 다시 통합하세요.')
@@ -499,12 +547,12 @@ export async function recoverWork(options) {
   if (options.work) {
     if (options.attempt) fail('복구 대상은 --work 또는 --attempt 중 하나만 지정하세요.')
     const group = Object.hasOwn(state.groups, options.work) ? state.groups[options.work] : null
-    if (group?.status === 'active' && group.operation?.kind === 'sync') {
+    if (group?.status === 'active' && ['sync', 'finishing'].includes(group.operation?.kind)) {
       requireStopped(group.operation)
       return transaction(context.root, (current) => {
         const entry = current.groups[group.id]
-        if (entry.operation?.token !== group.operation.token) fail('복구 중 sync 소유권이 변경됐습니다.')
-        entry.recoveredSync = { ...entry.operation, recoveredAt: now() }
+        if (entry.operation?.token !== group.operation.token) fail('복구 중 묶음 명령의 소유권이 변경됐습니다.')
+        entry[entry.operation.kind === 'sync' ? 'recoveredSync' : 'recoveredFinish'] = { ...entry.operation, recoveredAt: now() }
         delete entry.operation
         return entry
       })
@@ -583,15 +631,79 @@ export async function workBoard(options) {
   const group = groupOf(state, options.work)
   const board = await readTaskBoard({ targetRoot: context.cwd, ref: `refs/heads/${group.branch}` })
   const attempts = Object.values(state.attempts)
+  const live = attempts.filter(active)
+  const units = planUnits(board.tasks, board.doneIds, new Set(live.flatMap(unitTasks)))
+  const usable = !group.operation && board.ok && board.warnings.length === 0
   for (const task of board.tasks) {
-    const attempt = attempts.find((entry) => entry.taskId === task.id && active(entry))
+    const attempt = live.find((entry) => unitTasks(entry).includes(task.id))
+    const unit = units.find((entry) => entry.ids.includes(task.id))
     task.attempt = attempt ?? null
-    task.claimable = task.dependencyReady && !attempt && !group.operation && board.ok && board.warnings.length === 0 && !attempts.some((entry) => active(entry) && overlaps(task.touches, entry.touches))
+    task.unit = unit?.key ?? (attempt?.lane ? `lane:${attempt.lane}` : task.id)
+    task.claimable = Boolean(unit?.ready) && usable && !live.some((entry) => overlaps(unit.touches, entry.touches))
     task.runtimeStatus = attempt?.status ?? null
   }
-  return { ...board, scope: 'work', group, limits: workLimits(group.limits), attempts: attempts.filter((entry) => entry.group === group.id),
-    summary: workSummary(board, attempts.filter((entry) => entry.group === group.id)),
-    queues: Object.fromEntries(['doing', 'ready', 'reviewing', 'approved', 'changes_requested', 'blocked'].map((status) => [status, attempts.filter((entry) => entry.group === group.id && entry.status === status).map((entry) => entry.id)])) }
+  const local = attempts.filter((entry) => entry.group === group.id)
+  return { ...board, scope: 'work', group, limits: workLimits(group.limits), attempts: local,
+    units: [
+      ...local.filter(active).map((entry) => ({ key: entry.lane ? `lane:${entry.lane}` : entry.taskId, lane: entry.lane ?? null, tasks: unitTasks(entry), attempt: entry.id, status: entry.status, current: entry.taskId })),
+      ...units.map((unit) => ({ key: unit.key, lane: unit.lane, tasks: unit.ids, waitingOn: unit.waitingOn,
+        claimable: unit.ready && usable && !live.some((entry) => overlaps(unit.touches, entry.touches)) })),
+    ],
+    verified: await groupVerification(context, group),
+    summary: workSummary(board, local),
+    queues: Object.fromEntries(['doing', 'ready', 'reviewing', 'approved', 'changes_requested', 'blocked'].map((status) => [status, local.filter((entry) => entry.status === status).map((entry) => entry.id)])) }
+}
+
+// A group gate stays current while later commits only save progress checkpoints.
+async function groupVerification(context, group) {
+  if (!group.verified) return null
+  const target = await head(context.cwd, `refs/heads/${group.branch}`)
+  const changed = (await git(context.cwd, ['diff', '--name-only', group.verified.commit, target, '--', '.', ':(exclude)spec/STATE.md', `:(exclude)spec/work/${group.id}.json`], [128]))
+  return { ...group.verified, current: changed !== null && !changed.trim() }
+}
+
+// The group gate runs the full verification once, after every unit is integrated.
+export async function finishWork(options) {
+  const checks = commands(options)
+  const timeout = verifyTimeout(options)
+  const context = await repository(options)
+  const token = randomUUID()
+  const group = await transaction(context.root, (state) => {
+    const entry = groupOf(state, options.work)
+    noOperation(entry)
+    if (entry.runner && entry.runner.id !== options.runnerId) fail('runner 실행 중에는 수동 finish를 할 수 없습니다. runner의 --group-verify를 사용하세요.')
+    const live = Object.values(state.attempts).filter((attempt) => attempt.group === entry.id && active(attempt))
+    if (live.length) fail('통합되지 않은 실행이 남아 있습니다. 통합하거나 해제한 뒤 finish하세요.', live.map((attempt) => `${attempt.id} ${unitTasks(attempt).join(' ')} ${attempt.status}`))
+    entry.operation = { token, kind: 'finishing', ...creator(), startedAt: now() }
+    return structuredClone(entry)
+  })
+  let verified
+  try {
+    await assertWorkspace(context, group)
+    await requireClean(group.path)
+    const commit = await head(group.path)
+    const board = await readTaskBoard({ targetRoot: context.cwd, ref: commit })
+    if (!board.ok || board.warnings.length) fail('작업 브랜치의 태스크/STATE를 먼저 정리하세요.', [...board.errors, ...board.warnings])
+    const remaining = board.tasks.filter((task) => !task.st?.startsWith('blocked@'))
+    if (remaining.length) fail('남은 태스크가 있습니다. 모두 통합한 뒤 finish하세요.', remaining.map((task) => `${task.id} ${task.st}`))
+    const verification = await verify(group.path, checks, commit, options.signal, timeout)
+    verified = { commit, checks: progressChecks(verification), at: now(), excluded: board.tasks.map((task) => task.id) }
+    await transaction(context.root, (state) => {
+      const entry = groupOf(state, group.id)
+      if (entry.operation?.token !== token) fail('finish 소유권이 변경됐습니다.')
+      entry.verified = verified
+    })
+  } finally {
+    await transaction(context.root, (state) => {
+      const entry = groupOf(state, group.id)
+      if (entry.operation?.token === token) delete entry.operation
+    })
+  }
+  // The runner saves its own checkpoint on exit; a manual finish saves one now.
+  if (options.runnerId) return { schemaVersion: 1, work: group.id, verified, snapshot: null }
+  try { return { schemaVersion: 1, work: group.id, verified, snapshot: await syncWork(options) } } catch (error) {
+    return { schemaVersion: 1, work: group.id, verified, snapshot: null, snapshotError: error.message }
+  }
 }
 
 export async function workHistory(options) {
@@ -612,7 +724,7 @@ export async function workHistory(options) {
     snapshotAt = snapshot.snapshotAt
   }
   return { schemaVersion: 1, work: options.work, scope: group ? 'runtime' : 'snapshot', snapshotAt, task: options.task ?? null,
-    history: history.filter((entry) => !options.task || entry.taskId === options.task) }
+    history: history.filter((entry) => !options.task || entry.taskId === options.task || entry.tasks?.includes(options.task)) }
 }
 
 async function writeProgress(root, group, state, sourceCommit) {

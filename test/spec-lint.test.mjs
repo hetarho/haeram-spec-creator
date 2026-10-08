@@ -196,6 +196,27 @@ test('dep의 자기참조와 두 태스크 순환은 오류다', async () => {
   })
 })
 
+test('서로 기다리는 lane은 태스크 순환이 없어도 오류다', async () => {
+  const lane = (id, title, dep, name) => T002.replace('# T002 api', `# ${id} ${title}`).replace('dep:T001', `dep:${dep} | lane:${name}`)
+  const rows = (deps) => STATE.replace('| T002 | api | ARCH | T001 | todo |', deps.map(([id, dep]) => `| ${id} | x | ARCH | ${dep} | todo |`).join('\n'))
+  // T003(b) waits for T005(c) and T005 waits for T002(b): no task cycle, but lane b and c deadlock.
+  const deadlock = { state: rows([['T002', 'T001'], ['T003', 'T005'], ['T005', 'T002']]),
+    tasks: { 'T002.api.md': lane('T002', 'api', 'T001', 'b'), 'T003.next.md': lane('T003', 'next', 'T005', 'b'), 'T005.other.md': lane('T005', 'other', 'T002', 'c') } }
+  await withFixture(deadlock, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(!result.errors.some((error) => error.startsWith('dep 순환')), result.errors.join('\n'))
+    assert.ok(result.errors.some((error) => error.includes('lane 순환') && error.includes('T003→T005') && error.includes('T005→T002')), result.errors.join('\n'))
+  })
+  // A lane that waits for another lane to finish before it starts is an ordering, not a deadlock.
+  const ordered = { state: rows([['T002', 'T001'], ['T003', 'T002'], ['T005', 'T003']]),
+    tasks: { 'T002.api.md': lane('T002', 'api', 'T001', 'b'), 'T003.next.md': lane('T003', 'next', 'T002', 'b'), 'T005.other.md': lane('T005', 'other', 'T003', 'Bad_Lane') } }
+  await withFixture(ordered, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(!result.errors.some((error) => error.includes('lane 순환')))
+    assert.ok(result.errors.some((error) => error.includes('lane 형식 오류: Bad_Lane')))
+  })
+})
+
 test('STATE에만 있는 순환도 감지한다', async () => {
   const state = STATE.replace('| T002 | api | ARCH | T001 | todo |', '| T002 | api | ARCH | T002 | todo |')
   await withFixture({ state }, async (root) => {
