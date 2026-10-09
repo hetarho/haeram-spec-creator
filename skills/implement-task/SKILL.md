@@ -31,7 +31,7 @@ description: >-
 - owner는 세션마다 한 번 `<도구>-<영숫자 4자>`(예 `claude-k3f9`)로 정하고 끝까지 같은 값을 쓴다.
 - 반복: `npx haeram-spec-creator work next --owner <owner> --wait 540 --json`. 활성 묶음이 없으면 `--start`와 ARCH 검증 단계의 명령(`--task-verify` 태스크 단계, `--verify` 단위 통합, `--group-verify` 묶음 완료)을 붙인다 — 같은 커밋에서 시작한 세션들은 같은 묶음에 합류한다. 셸 도구의 timeout은 대기 시간보다 길게 둔다.
 - 응답의 `action`대로 하고 `instruction`을 따른다:
-  - `implement`: `attempt.workspace`에서 `attempt.taskId`를 이 스킬의 2~5단계(작업 묶음 워커 규칙)로 구현·커밋하고 `work submit --attempt <id> --json`. 저장된 태스크 단계 명령이 자동 실행된다. 응답이 `doing`이고 `taskId`가 바뀌면 같은 공간에서 이어 구현하고, `ready`면 루프로 돌아간다. `correction`이 있으면 그 findings부터 처리한다(통합 실패면 묶음 브랜치를 merge해 해결).
+  - `implement`: `attempt.workspace`에서 `attempt.tasks`를 `attempt.taskId`부터 순서대로 이 스킬의 2~5단계(작업 묶음 워커 규칙)로 구현하고 태스크마다 커밋한다. lane의 마지막 태스크까지 끝낸 뒤 `work submit --attempt <id> --json`을 한 번 실행한다 — 저장된 태스크 단계 명령이 lane 변경 전체에 실행되고 `ready`가 된다. 응답이 `doing`이면 완료 기록이 빠진 태스크부터 이어 가고, `ready`면 루프로 돌아간다. `correction`이 있으면 그 findings부터 처리한다(통합 실패면 묶음 브랜치를 merge해 해결).
   - `review`: review-task로 `review.workspace`를 읽기 전용 검토하고 `work review-finish`를 실행한다.
   - `blocked`: 직접 고칠 수 있으면 고치고 `work update --attempt <id> --status doing` 후 다시 submit, 기획 판단이 필요하면 보고하고 멈춘다.
   - `wait`: 그대로 다시 호출한다. `reason:needs-reviewer`면 독립 리뷰어가 없는 것이다 — 서브에이전트 도구가 있으면 새 컨텍스트의 서브에이전트에 review-task를 맡기고(owner `<owner>-review`로 `work review-claim`부터), 없으면 다른 세션을 열어 같은 요청을 하라고 안내한다.
@@ -57,7 +57,7 @@ description: >-
 ## 5. 마감
 - 기본 어댑터가 커밋도 호스트가 담당한다고 지정했다면 코드·acceptance·result를 채우고 지정된 JSON 결과를 반환한다. git add/commit·submit은 실행하지 않는다. 호스트가 변경 범위·시작 HEAD를 확인하고 커밋·검증·제출한다. 아직 커밋되지 않은 변경을 검사했다면 result at은 `-`로 쓰고, 실제 실행한 검사만 verified에 적는다.
 - 커밋은 워커에게 맡기는 `commit-only` 실행기라면 아래 작업 묶음 절차에서 commit까지 수행하고 지정된 JSON 결과를 반환한다. submit·재배정·통합은 runner가 담당한다. 모든 수정 배정에서 전달된 correction findings를 먼저 읽고 acceptance와 함께 확인한다.
-- **작업 묶음 워커**는 아래 result 4줄을 채우고 코드와 자신의 태스크 변경만 커밋한 뒤 `npx haeram-spec-creator work submit --attempt <id> --verify '<태스크 단계 test 명령>' --json`으로 실제 검증을 실행한다(`--verify` 반복 가능, 전체 스위트는 넣지 않는다). lane 배정에서 응답이 `status:doing`이고 `taskId`가 바뀌었으면 같은 공간에서 다음 태스크를 1단계(정독)부터 이어 구현한다 — 마지막 태스크의 submit이 ready다. 그룹 작업을 수행하도록 받은 지시의 범위에 커밋이 포함되지 않았거나 금지됐다면 결과를 보존하고 제출에 필요한 커밋을 보고한다. 명령 성공 시 리뷰 대기 ready이며, STATE 갱신·done 표기·아카이브 이동은 하지 않고 관리 세션에 attempt와 검증 커밋을 전달한다. 통합과 정리는 `manage-work`가 수행한다.
+- **작업 묶음 워커**는 아래 result 4줄을 채우고 코드와 자신의 태스크 변경만 커밋한 뒤 `npx haeram-spec-creator work submit --attempt <id> --verify '<태스크 단계 test 명령>' --json`으로 실제 검증을 실행한다(`--verify` 반복 가능, 전체 스위트는 넣지 않는다). lane 배정은 마지막 태스크까지 구현·커밋한 뒤 한 번 제출하면 된다. submit은 앞에서부터 이어서 완료된 태스크를 모두 기록하고, 남은 태스크가 있으면 `status:doing`과 다음 `taskId`를 돌려준다(태스크마다 제출해 단계별 검사를 받아도 된다). 그룹 작업을 수행하도록 받은 지시의 범위에 커밋이 포함되지 않았거나 금지됐다면 결과를 보존하고 제출에 필요한 커밋을 보고한다. 명령 성공 시 리뷰 대기 ready이며, STATE 갱신·done 표기·아카이브 이동은 하지 않고 관리 세션에 attempt와 검증 커밋을 전달한다. 통합과 정리는 `manage-work`가 수행한다.
 - 아래 아카이브·STATE 마감 절차는 **단독 흐름에만** 적용한다.
 - 태스크 `## result`(FORMAT 골격, 4줄): `- outcome:` 무엇이 되게 됐는지 / `- at:` 검증을 돌린 커밋 SHA(git이 없으면 `-`) / `- verified:` 실제로 통과시킨 검사 / `- limits:` 남은 한계·후속(없으면 `-`). 대화 경위와 구현 과정 서술은 넣지 않는다.
 - 구현 중 정해진 것 중 **이후 변경이 계속 지켜야 하는 계약**은 result에 적어 끝내지 않는다 — 완료 태스크는 아카이브라 아무도 현재 규칙으로 읽지 않는다. update-ssot를 제안해 SSOT로 올린다.

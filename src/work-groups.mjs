@@ -125,8 +125,17 @@ async function currentUnit(context, group, ids, snapshot) {
   return { commit, board, tasks: await Promise.all(tasks.map(async (task) => ({ task, content: await blob(context.cwd, commit, task.file) }))) }
 }
 
+function incomplete(task, content) {
+  const acceptance = sections(content).get('acceptance') ?? []
+  if (!acceptance.some((row) => /^- \[v\] /.test(row)) || acceptance.some((row) => /^- \[[^v]\]/.test(row))) return `${task.id}: 태스크 acceptance를 실제로 확인하고 모두 [v]로 기록하세요.`
+  const result = (sections(content).get('result') ?? []).join('\n')
+  const missing = ['outcome', 'at', 'verified', 'limits'].find((key) => !new RegExp(`^- ${key}: .+`, 'm').test(result))
+  return missing ? `${task.id}: 태스크 result에 ${missing} 기록이 필요합니다.` : null
+}
+
 // Tasks before and including the attempt's current task must be complete; later lane
-// tasks only have to keep their contract.
+// tasks only have to keep their contract. reach is the last task of the unbroken run of
+// completed tasks, so one submit after the last task covers the whole lane.
 async function checkWorker(context, group, attempt, workingTree = false) {
   const workspace = await assertWorkspace(context, attempt)
   if (workingTree) await requireNoGitOperation(attempt.workspace)
@@ -136,16 +145,13 @@ async function checkWorker(context, group, attempt, workingTree = false) {
   if (position === -1) fail('실행 기록의 현재 태스크가 배정 단위에 없습니다.')
   const current = await currentUnit(context, group, ids)
   const read = (file) => workingTree ? readFile(path.join(attempt.workspace, file), 'utf8').catch(() => null) : blob(context.cwd, workspace.git.head, file)
+  let reach = position
   for (const [index, { task, content: upstream }] of current.tasks.entries()) {
     const content = await read(task.file)
     if (!content || taskContract(content) !== taskContract(upstream)) fail(`${task.id}: 태스크 계약이 상위 브랜치와 다릅니다. 기획 변경을 확인하고 작업을 동기화하세요.`)
-    if (index > position) continue
-    const acceptance = sections(content).get('acceptance') ?? []
-    if (!acceptance.some((row) => /^- \[v\] /.test(row)) || acceptance.some((row) => /^- \[[^v]\]/.test(row))) fail(`${task.id}: 태스크 acceptance를 실제로 확인하고 모두 [v]로 기록하세요.`)
-    const result = (sections(content).get('result') ?? []).join('\n')
-    for (const key of ['outcome', 'at', 'verified', 'limits']) {
-      if (!new RegExp(`^- ${key}: .+`, 'm').test(result)) fail(`${task.id}: 태스크 result에 ${key} 기록이 필요합니다.`)
-    }
+    const problem = incomplete(task, content)
+    if (index <= position && problem) fail(problem)
+    if (index === reach + 1 && !problem) reach = index
   }
   for (const domain of new Set(current.tasks.flatMap(({ task }) => task.base.map((base) => base.split('@')[0])))) {
     const file = `spec/ssot/${domain}.md`
@@ -157,7 +163,7 @@ async function checkWorker(context, group, attempt, workingTree = false) {
   if (workingTree) changes.push(...(await git(attempt.workspace, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'spec/'])).split('\0').filter(Boolean))
   const own = new Set(current.tasks.map(({ task }) => task.file))
   if (changes.some((file) => !own.has(file))) fail('워커는 자신의 태스크 외 spec 문서를 변경할 수 없습니다. 기획 공간으로 인계하세요.', changes)
-  return { ...current, workerCommit: workspace.git.head }
+  return { ...current, workerCommit: workspace.git.head, reach }
 }
 
 function commands(options, key = 'verify', optional = false) {
@@ -470,25 +476,26 @@ export async function submitWork(options) {
     const previous = (attempt.steps ?? []).some((entry) => entry.taskId === attempt.taskId) ? null
       : (attempt.steps ?? []).find((entry) => entry.taskId === ids[ids.indexOf(attempt.taskId) - 1])?.commit
     const diffBase = previous ?? (await git(context.cwd, ['merge-base', current.commit, current.workerCommit])).trim()
+    const covered = ids.slice(ids.indexOf(attempt.taskId), current.reach + 1)
     const verification = await verify(attempt.workspace, checks, current.workerCommit, options.signal, timeout,
-      { TIER: 'task', DIFF_BASE: diffBase, TASK: attempt.taskId, TASKS: ids.join(' ') })
+      { TIER: 'task', DIFF_BASE: diffBase, TASK: covered.at(-1), TASKS: covered.join(' ') })
     await assertWorkspace(context, reservation.attempt)
     // Another unit may integrate meanwhile; the contract and SSOT must still match the new target.
     const latest = await checkWorker(context, reservation.group, reservation.attempt)
     if (latest.workerCommit !== current.workerCommit) fail('검증 중 워커 HEAD가 바뀌었습니다. 다시 제출하세요.')
     options.signal?.throwIfAborted()
-    const position = ids.indexOf(reservation.attempt.taskId)
-    const step = { taskId: reservation.attempt.taskId, commit: current.workerCommit, verification: progressChecks(verification), at: now() }
-    const steps = (attempt) => [...(attempt.steps ?? []).filter((entry) => entry.taskId !== step.taskId), step]
-    if (position < ids.length - 1) {
+    const at = now()
+    const recorded = covered.map((taskId) => ({ taskId, commit: current.workerCommit, verification: progressChecks(verification), at }))
+    const steps = (attempt) => [...(attempt.steps ?? []).filter((entry) => !covered.includes(entry.taskId)), ...recorded]
+    if (current.reach < ids.length - 1) {
       // A lane step hands the same workspace its next task without waiting for review.
       return await finishOperation(context, reservation, (attempt) => Object.assign(attempt, {
-        status: 'doing', taskId: ids[position + 1], steps: steps(attempt), reason: null,
+        status: 'doing', taskId: ids[current.reach + 1], steps: steps(attempt), reason: null,
       }))
     }
     await git(context.cwd, ['update-ref', `refs/haeram/attempts/${reservation.attempt.id}`, current.workerCommit])
     return await finishOperation(context, reservation, (attempt) => Object.assign(attempt, {
-      status: 'ready', submissionId: randomUUID(), verifiedCommit: current.workerCommit, submittedBase: latest.commit, verification, steps: steps(attempt), submittedAt: now(), reason: null,
+      status: 'ready', taskId: ids.at(-1), submissionId: randomUUID(), verifiedCommit: current.workerCommit, submittedBase: latest.commit, verification, steps: steps(attempt), submittedAt: now(), reason: null,
     }))
   } catch (error) {
     await finishOperation(context, reservation, (attempt) => Object.assign(attempt, { status: 'blocked', reason: error.message }))

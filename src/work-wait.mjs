@@ -8,7 +8,8 @@ import { readTaskBoard } from './task-board.mjs'
 import { readRuntime, transaction } from './work-runtime.mjs'
 import { startWork, claimNextWork, recoverWork, workInternals } from './work-groups.mjs'
 import { claimReview, resumeWork } from './work-review.mjs'
-import { activeAttempt, unitTasks } from './work-policy.mjs'
+import { activeAttempt, unitTasks, overlaps } from './work-policy.mjs'
+import { planUnits } from './task-graph.mjs'
 
 const { repository, groupOf, fail, head, groupVerification } = workInternals
 const cli = fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.url))
@@ -114,6 +115,10 @@ async function outlook(context, id, owner) {
     if (group.finishFailure?.commit === target) return { state: 'stalled', finishFailure: group.finishFailure }
     return { state: 'waiting', reason: 'finishing' }
   }
+  // A claim can lose a race with an integration that just moved the branch; a ready unit
+  // that no live attempt blocks is never a stall.
+  const claimable = planUnits(board.tasks, board.doneIds, owned).some((unit) => unit.ready && !live.some((entry) => overlaps(unit.touches, entry.touches)))
+  if (claimable) return { state: 'waiting', reason: 'claimable' }
   if (!moving.length && !group.runner && !group.operation) return { state: 'stalled', blocked, waitingOn: open.map((task) => ({ id: task.id, waitingOn: task.waitingOn })) }
   const inFlight = moving.map((entry) => ({ attempt: entry.id, tasks: unitTasks(entry), owner: entry.owner, status: entry.status }))
   // Only this session's own submissions are waiting and nobody else is working: an
@@ -123,7 +128,7 @@ async function outlook(context, id, owner) {
 }
 
 const INSTRUCTION = {
-  implement: 'attempt.workspace에서 attempt.taskId를 implement-task로 구현·커밋하고 work submit --attempt <id>를 실행한다. 응답이 doing이고 taskId가 바뀌면 같은 공간에서 이어 구현하고, ready면 work next를 다시 호출한다. correction이 있으면 findings부터 처리한다.',
+  implement: 'attempt.workspace에서 attempt.tasks를 attempt.taskId부터 순서대로 implement-task로 구현하고 태스크마다 커밋한 뒤, 마지막 태스크까지 끝나면 work submit --attempt <id>를 한 번 실행한다. 응답이 doing이면 그 taskId부터 이어 가고, ready면 work next를 다시 호출한다. correction이 있으면 findings부터 처리한다.',
   review: 'review.workspace(읽기 전용)에서 review-task로 review.tasks를 검토하고, 저장소 밖 JSON 파일에 결과를 써서 work review-finish --review <id> --result-file <path>를 실행한 뒤 work next를 다시 호출한다.',
   blocked: 'attempt.reason을 확인한다. 직접 고칠 수 있으면 고친 뒤 work update --attempt <id> --status doing으로 재개해 다시 submit하고, 기획 판단이 필요하면 사용자에게 보고하고 멈춘다.',
   wait: 'work next를 다시 호출한다. 통합·검증은 CLI가 백그라운드에서 진행한다.',

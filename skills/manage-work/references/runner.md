@@ -23,7 +23,7 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 - 명령에는 `HAERAM_TIER`(task|unit|group), `HAERAM_DIFF_BASE`(태스크=이전 단계 커밋, 단위=통합 전 상위 커밋, 묶음=묶음 시작 커밋), `HAERAM_TASK`·`HAERAM_TASKS`가 전달된다. 예: `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 호스트가 영향받는 테스트를 직접 실행한다. 빈 선택이 통과로 끝나지 않게 명령을 구성한다.
 
 ### lane
-lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 새 에이전트를 실행하고, 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
+lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 새 에이전트를 실행하고(컨텍스트를 태스크마다 새로 시작), 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 세션 루프의 세션은 lane 전체를 구현한 뒤 한 번 제출한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
 
 `--provider auto`가 기본이며 호환되는 Codex, Claude 순으로 선택한다. Orca 설치 여부로 실행 방식을 바꾸지 않는다. reviewer-provider를 생략하면 worker와 같은 도구를 사용한다. `--model`·`--reviewer-model`을 생략하면 각 CLI의 설정을 사용한다. 같은 도구의 리뷰어는 명시한 worker 모델을 상속하고, 다른 도구의 리뷰어는 모델을 따로 지정하지 않으면 그 CLI 기본값을 사용한다. 임의로 모델을 추정하거나 설치·로그인하지 않는다.
 
@@ -117,7 +117,7 @@ Git에 저장된 체크포인트는 다른 clone에도 남는다. runtime이 없
 
 `work doctor`는 PATH의 orca/orca-dev/orca-ide와 macOS 앱에 포함된 CLI를 검사한다. 앱만 설치해도 `/Applications/Orca.app/Contents/Resources/bin/orca`를 찾을 수 있고, 터미널에서 `orca`로 쓰려면 Settings → General → Orca CLI에서 등록한다([공식 안내](https://www.onorca.dev/docs/troubleshooting)). 다른 설치 경로는 `ORCA_CLI_COMMAND` 환경 변수로 실행 파일 경로를 지정한다. 앱 실행·PATH 수정·Orca 작업 생성은 doctor가 수행하지 않는다.
 
-coordinator가 직접 역할을 나누려면 같은 CLI를 단계별로 호출한다: 빈 worker 슬롯은 `work next`, worker 완료는 `work submit`(lane이면 다음 `taskId`를 같은 공간에서 계속), 빈 reviewer 슬롯은 `work review-claim`, 리뷰 완료는 `work review-finish`. approved 통합과 finish는 next가 백그라운드로 시작하거나 coordinator가 `work integrate`/`work finish`로 실행한다. 알림은 중복될 수 있으므로 runtime의 attempt/review 상태로 처리 여부를 확인하고, 재시작 후에도 runtime을 먼저 읽는다. Orca의 task/dispatch ID는 실행 추적용으로만 매핑하고 의존성 충족·선점·승인·통합을 두 시스템에서 따로 결정하지 않는다. 원격 실행기는 파일을 공유하지 않는 다른 clone을 같은 로컬 그룹에 연결할 수 없다.
+coordinator가 직접 역할을 나누려면 같은 CLI를 단계별로 호출한다: 빈 worker 슬롯은 `work next`, worker 완료는 `work submit`(lane 전체를 끝낸 뒤 한 번, 또는 태스크마다 — 남은 태스크가 있으면 다음 `taskId`를 같은 공간에서 계속), 빈 reviewer 슬롯은 `work review-claim`, 리뷰 완료는 `work review-finish`. approved 통합과 finish는 next가 백그라운드로 시작하거나 coordinator가 `work integrate`/`work finish`로 실행한다. 알림은 중복될 수 있으므로 runtime의 attempt/review 상태로 처리 여부를 확인하고, 재시작 후에도 runtime을 먼저 읽는다. Orca의 task/dispatch ID는 실행 추적용으로만 매핑하고 의존성 충족·선점·승인·통합을 두 시스템에서 따로 결정하지 않는다. 원격 실행기는 파일을 공유하지 않는 다른 clone을 같은 로컬 그룹에 연결할 수 없다.
 
 ## 중단과 복구
 

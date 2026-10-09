@@ -993,14 +993,12 @@ test('세션 루프: 기반 → 리뷰 → 백그라운드 통합 → 줄기 분
     assert.equal(assignment.action, 'review', JSON.stringify(assignment))
     await finishReview({ ...setup, review: assignment.review.id, result: { verdict: 'approved', summary: 'reviewed', findings: [] } })
   }
+  // A lane is implemented to its last task and submitted once.
   const deliver = async (attempt) => {
-    let current = attempt
-    for (;;) {
-      await complete(current.workspace, current.taskId)
-      const submitted = await submitWork({ ...setup, attempt: current.id })
-      if (submitted.status === 'ready') return submitted
-      current = submitted
-    }
+    for (const id of attempt.tasks) await complete(attempt.workspace, id)
+    const submitted = await submitWork({ ...setup, attempt: attempt.id })
+    assert.equal(submitted.status, 'ready')
+    return submitted
   }
 
   // Session A starts the group from the main checkout and takes the foundation first.
@@ -1034,8 +1032,9 @@ test('세션 루프: 기반 → 리뷰 → 백그라운드 통합 → 줄기 분
   assert.deepEqual(board.doneIds, ['T001', 'T002', 'T003', 'T004', 'T005'])
   assert.ok(board.attempts.every((entry) => entry.status === 'integrated' && !entry.reviewHistory), JSON.stringify(board.attempts.map((entry) => entry.reviewHistory)))
   const lines = (await readFile(log, 'utf8')).trim().split('\n').map((line) => line.split(' '))
-  const step = readyA.steps.find((entry) => entry.taskId === 'T002').commit
-  assert.ok(lines.some(([tier, id, base]) => tier === 'task' && id === 'T003' && base === step), JSON.stringify(lines))
+  assert.deepEqual(readyA.steps.map((entry) => [entry.taskId, entry.commit]), [['T002', readyA.verifiedCommit], ['T003', readyA.verifiedCommit]])
+  assert.ok(lines.some(([tier, id, base]) => tier === 'task' && id === 'T003' && base === ofB.attempt.startCommit), JSON.stringify(lines))
+  assert.equal(lines.filter(([tier]) => tier === 'task').length, 4)
   assert.equal(lines.filter(([tier]) => tier === 'unit').length, 4)
   assert.deepEqual(lines.filter(([tier]) => tier === 'group').map(([, , base]) => base), [board.group.baseCommit])
 })
@@ -1076,8 +1075,10 @@ test('실행기는 lane 태스크를 같은 공간에 차례로 배정하고 묶
   const group = await startWork({ ...setup, name: 'lane-runner' })
   const log = path.join(setup.temporary, 'dispatch.log')
   const runner = await laneAdapter(setup, log)
+  const bases = path.join(setup.temporary, 'bases.log')
+  const record = `node -e "require('fs').appendFileSync('${bases}', process.env.HAERAM_TASK + ' ' + process.env.HAERAM_DIFF_BASE + String.fromCharCode(10))"`
   const result = await runWork({ ...setup, work: group.id, ...runner,
-    taskVerify: [checkFile('spec/STATE.md')], verify: [checkFile('spec/ssot/ARCH.md')], groupVerify: [checkFile('T006.txt')] })
+    taskVerify: [checkFile('spec/STATE.md'), record], verify: [checkFile('spec/ssot/ARCH.md')], groupVerify: [checkFile('T006.txt')] })
   assert.equal(result.outcome, 'completed', JSON.stringify(result))
   assert.deepEqual(result.failures, [])
   assert.deepEqual(result.attempts.map((entry) => entry.status), ['integrated', 'integrated', 'integrated', 'integrated'])
@@ -1093,7 +1094,11 @@ test('실행기는 lane 태스크를 같은 공간에 차례로 배정하고 묶
   assert.ok(result.finish.commit)
   const board = await workBoard({ ...setup, work: group.id })
   assert.equal(board.verified.current, true)
-  assert.match(await readFile(path.join(group.path, 'spec/tasks/done/T003.lane.md'), 'utf8'), /verified: "node -e .*STATE\.md.*"; integration "node -e .*ARCH\.md/)
+  // Each lane step's checks see only that task's changes.
+  const laneA = board.attempts.find((entry) => entry.lane === 'a')
+  const stepBase = Object.fromEntries((await readFile(bases, 'utf8')).trim().split('\n').map((line) => line.split(' ')))
+  assert.equal(stepBase.T003, laneA.steps.find((entry) => entry.taskId === 'T002').commit)
+  assert.match(await readFile(path.join(group.path, 'spec/tasks/done/T003.lane.md'), 'utf8'), /verified: "node -e .*STATE\.md.*"; ".*"; integration "node -e .*ARCH\.md/)
 })
 
 test('runner가 lane 중간에 멈추면 다음 runner가 같은 공간에서 이어받는다', async (t) => {
