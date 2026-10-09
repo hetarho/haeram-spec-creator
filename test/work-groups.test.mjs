@@ -458,7 +458,7 @@ test('리뷰 선점은 하나만 성공하고 수정 요청은 신규 작업보�
   await integrateWork({ ...setup, attempt: attempt.id, verify: checks })
 })
 
-test('제출 이후 변경과 리뷰 이후 상위 브랜치 이동은 승인을 무효화한다', async (t) => {
+test('제출 이후 변경과 리뷰 이후 겹치는 상위 변경은 승인을 무효화한다', async (t) => {
   const setup = await ready(t)
   await writeFile(path.join(setup.attempt.workspace, 'one.txt'), 'changed\n')
   await commit(setup.attempt.workspace)
@@ -466,7 +466,9 @@ test('제출 이후 변경과 리뷰 이후 상위 브랜치 이동은 승인을
   assert.equal((await inspectWork(setup)).attempts[0].status, 'blocked')
   await submitWork({ ...setup, attempt: setup.attempt.id, verify: checks })
   await approve(setup, setup.attempt)
-  await git(setup.group.path, 'commit', '--allow-empty', '-m', 'base moved')
+  // The base adds the same file with the worker's content, so the later merge stays clean.
+  await writeFile(path.join(setup.group.path, 'one.txt'), 'changed\n')
+  await commit(setup.group.path, 'base touches the submission')
   await assert.rejects(integrateWork({ ...setup, attempt: setup.attempt.id, verify: checks }), /통합을 완료하지/)
   const entry = (await inspectWork(setup)).attempts[0]
   assert.equal(entry.status, 'ready')
@@ -482,7 +484,8 @@ test('리뷰 중 변경된 기준과 해제한 review ID로는 승인할 수 없
   await releaseReview({ ...setup, review: review.id })
   await assert.rejects(finishReview({ ...setup, review: review.id, result: { verdict: 'approved', summary: 'late', findings: [] } }), /오래된/)
   review = await claimReview({ ...setup, work: 'feature', attempt: setup.attempt.id, owner: 'r' })
-  await git(setup.group.path, 'commit', '--allow-empty', '-m', 'new base')
+  await writeFile(path.join(setup.group.path, 'one.txt'), 'result\n')
+  await commit(setup.group.path, 'overlapping base')
   await assert.rejects(finishReview({ ...setup, review: review.id, result: { verdict: 'approved', summary: 'stale', findings: [] } }), /바뀌었/)
   assert.equal((await inspectWork(setup)).attempts[0].status, 'ready')
 })
@@ -532,6 +535,19 @@ test('어댑터 실패는 작업을 보존하고 runner 중복 실행과 live �
   await transaction(runtime, (state) => { state.groups[group.id].runner = { id: 'live', pid: process.pid, host: os.hostname() } })
   await assert.rejects(runWork({ ...setup, work: group.id, adapter: config, verify: checks }), /이미/)
   await assert.rejects(recoverRunner({ ...setup, work: group.id }), /실행 중/)
+})
+
+test('겹치지 않는 상위 변경은 승인과 리뷰를 유지한 채 통합한다', async (t) => {
+  const setup = await ready(t)
+  const review = (await inspectWork(setup)).attempts[0].review
+  await writeFile(path.join(setup.group.path, 'unrelated.txt'), 'other unit\n')
+  await commit(setup.group.path, 'another unit integrated')
+  assert.equal((await claimReview({ ...setup, work: 'feature', owner: 'r2' })).idle, true)
+  assert.equal((await inspectWork(setup)).attempts[0].status, 'approved')
+  const integrated = await integrateWork({ ...setup, attempt: setup.attempt.id, verify: [...checks, checkFile('unrelated.txt')] })
+  assert.equal(integrated.status, 'integrated')
+  assert.equal(integrated.review.id, review.id)
+  assert.equal(integrated.reviewHistory, undefined)
 })
 
 test('리뷰 결과의 추가 필드로 고정된 커밋과 ID를 덮어쓸 수 없다', async (t) => {
@@ -925,7 +941,7 @@ test('lane은 한 공간에서 순서대로 구현하고 lane 단위로 리뷰·
   await complete(last5.workspace, 'T005')
   await submitWork({ ...setup, attempt: last5.id })
   await deliver(setup, last5, [checkFile('T005.txt')])
-  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'x' })).reason, 'complete')
+  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'x' })).action, 'complete')
   await assert.rejects(finishWork({ ...setup, work: group.id, verify: [checkFile('missing.txt')] }), /검증 실패/)
   const finished = await finishWork({ ...setup, work: group.id, verify: ['T001.txt', 'T002.txt', 'T003.txt', 'T004.txt', 'T005.txt'].map(checkFile) })
   assert.equal(finished.snapshotError, undefined)
@@ -946,28 +962,95 @@ test('서로 기다리는 lane 계획은 배정 전에 거부한다', async (t) 
   await assert.rejects(claimNextWork({ ...setup, work: group.id, owner: 'a' }), /태스크\/STATE/)
 })
 
-test('next --wait는 dep이 열릴 때까지 대기하고 진행할 수 없으면 stalled를 반환한다', async (t) => {
+test('blocked만 남으면 next는 stalled, review-claim --wait는 제출을 기다렸다 선점한다', async (t) => {
   const setup = await fixture(t)
   const group = await startWork({ ...setup, name: 'waiting' })
   const a = await claimWork({ ...setup, work: group.id, task: 'T001', owner: 'a' })
   const b = await claimWork({ ...setup, work: group.id, task: 'T002', owner: 'b' })
-  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'c' })).reason, 'no-eligible-task')
-  const waitingWorker = nextWork({ ...setup, work: group.id, owner: 'c', wait: 60, pollMs: 50 })
+  const idle = await nextWork({ ...setup, work: group.id, owner: 'c' })
+  assert.deepEqual([idle.action, idle.reason], ['wait', 'no-eligible-task'])
   const waitingReviewer = claimReviewWaiting({ ...setup, work: group.id, owner: 'r', wait: 60, pollMs: 50 })
   await implement(a)
   await submitWork({ ...setup, attempt: a.id, verify: checks })
-  const review = await waitingReviewer
-  assert.equal(review.attempt, a.id)
-  await finishReview({ ...setup, review: review.id, result: { verdict: 'approved', summary: 'reviewed', findings: [] } })
-  await integrateWork({ ...setup, attempt: a.id, verify: checks })
-  const unblocked = await waitingWorker
-  assert.deepEqual([unblocked.taskId, unblocked.owner], ['T003', 'c'])
+  assert.equal((await waitingReviewer).attempt, a.id)
   await updateWork({ ...setup, attempt: b.id, status: 'blocked', reason: 'needs decision' })
-  await updateWork({ ...setup, attempt: unblocked.id, status: 'blocked', reason: 'needs decision' })
+  await releaseReview({ ...setup, review: (await inspectWork(setup)).attempts.find((entry) => entry.id === a.id).review.id })
+  await updateWork({ ...setup, attempt: a.id, status: 'blocked', reason: 'needs decision' })
   const stalled = await nextWork({ ...setup, work: group.id, owner: 'd', wait: 60, pollMs: 50 })
-  assert.equal(stalled.reason, 'stalled')
-  assert.deepEqual(stalled.blocked.map((entry) => entry.tasks).sort(), [['T002'], ['T003']])
-  assert.equal((await nextWork({ ...setup, work: group.id, owner: 'c', wait: 1, pollMs: 50 })).reason, 'stalled')
+  assert.equal(stalled.action, 'stalled')
+  assert.deepEqual(stalled.blocked.map((entry) => entry.tasks).sort(), [['T001'], ['T002']])
+  const own = await nextWork({ ...setup, work: group.id, owner: 'b' })
+  assert.deepEqual([own.action, own.attempt.id], ['blocked', b.id])
+})
+
+test('세션 루프: 기반 → 리뷰 → 백그라운드 통합 → 줄기 분담 → 묶음 검증까지 자동으로 진행한다', async (t) => {
+  const setup = await laneFixture(t, [['T001', '-', '-'], ['T002', 'T001', 'a'], ['T003', 'T002', 'a'], ['T004', 'T001', 'b'], ['T005', 'T003 T004', '-']])
+  const log = path.join(setup.temporary, 'tiers.log')
+  const record = `node -e "require('fs').appendFileSync('${log}', [process.env.HAERAM_TIER, process.env.HAERAM_TASK || '-', process.env.HAERAM_DIFF_BASE].join(' ') + String.fromCharCode(10))"`
+  const tiers = { taskVerify: [record], verify: [record], groupVerify: [record, checkFile('T005.txt')], reviewers: 2 }
+  const session = (owner, extra = {}) => nextWork({ ...setup, owner, pollMs: 100, ...extra })
+  const review = async (assignment) => {
+    assert.equal(assignment.action, 'review', JSON.stringify(assignment))
+    await finishReview({ ...setup, review: assignment.review.id, result: { verdict: 'approved', summary: 'reviewed', findings: [] } })
+  }
+  const deliver = async (attempt) => {
+    let current = attempt
+    for (;;) {
+      await complete(current.workspace, current.taskId)
+      const submitted = await submitWork({ ...setup, attempt: current.id })
+      if (submitted.status === 'ready') return submitted
+      current = submitted
+    }
+  }
+
+  // Session A starts the group from the main checkout and takes the foundation first.
+  const first = await session('a', { start: true, ...tiers })
+  assert.deepEqual([first.action, first.attempt.tasks], ['implement', ['T001']])
+  const work = first.work
+  assert.equal((await session('b')).reason, 'no-eligible-task')
+  await deliver(first.attempt)
+  const alone = await session('a', { wait: 60 })
+  assert.deepEqual([alone.action, alone.reason], ['wait', 'needs-reviewer'])
+  // Session B reviews the foundation; the CLI integrates it in the background.
+  await review(await session('b', { wait: 60 }))
+  const ofB = await session('b', { wait: 120 })
+  const ofA = await session('a', { wait: 60 })
+  assert.deepEqual([ofB.attempt.lane, ofA.attempt.lane], ['a', 'b'])
+  const readyA = await deliver(ofB.attempt)
+  await deliver(ofA.attempt)
+  await review(await session('a', { wait: 60 }))
+  await review(await session('b', { wait: 60 }))
+  // Both lanes integrate one after the other; the second approval survives the first.
+  const last = await session('a', { wait: 180 })
+  assert.deepEqual(last.attempt.tasks, ['T005'])
+  await deliver(last.attempt)
+  await review(await session('b', { wait: 60 }))
+  const done = await session('a', { wait: 180 })
+  assert.equal(done.action, 'complete', JSON.stringify(done))
+  assert.equal(done.verified.current, true)
+  assert.equal((await session('b')).action, 'complete')
+
+  const board = await workBoard({ ...setup, work })
+  assert.deepEqual(board.doneIds, ['T001', 'T002', 'T003', 'T004', 'T005'])
+  assert.ok(board.attempts.every((entry) => entry.status === 'integrated' && !entry.reviewHistory), JSON.stringify(board.attempts.map((entry) => entry.reviewHistory)))
+  const lines = (await readFile(log, 'utf8')).trim().split('\n').map((line) => line.split(' '))
+  const step = readyA.steps.find((entry) => entry.taskId === 'T002').commit
+  assert.ok(lines.some(([tier, id, base]) => tier === 'task' && id === 'T003' && base === step), JSON.stringify(lines))
+  assert.equal(lines.filter(([tier]) => tier === 'unit').length, 4)
+  assert.deepEqual(lines.filter(([tier]) => tier === 'group').map(([, , base]) => base), [board.group.baseCommit])
+})
+
+test('백그라운드 통합이 실패하면 단위 소유자에게 수정 요청으로 돌아간다', async (t) => {
+  const setup = await fixture(t)
+  const group = await startWork({ ...setup, name: 'auto-correct', verify: [checkFile('never.txt')] })
+  const attempt = await claimWork({ ...setup, work: group.id, task: 'T001', owner: 'a' })
+  await implement(attempt)
+  await submitWork({ ...setup, attempt: attempt.id })
+  await approve(setup, attempt)
+  await assert.rejects(integrateWork({ ...setup, attempt: attempt.id, autoCorrect: true }), /통합을 완료하지/)
+  const next = await nextWork({ ...setup, work: group.id, owner: 'a' })
+  assert.deepEqual([next.action, next.attempt.id, next.attempt.correction.findings[0].where], ['implement', attempt.id, 'integration'])
+  assert.match(next.attempt.correction.findings[0].message, /never\.txt/)
 })
 
 async function laneAdapter(setup, log) {

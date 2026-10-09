@@ -45,7 +45,7 @@ spec/이 이미 있으면 0단계 생략, ARCH 개정 모드 — 진행과 마�
 사용자가 답을 모르면 강요하지 말고 [?]로 등록하고 진행한다.
 
 ## 3. ssot/ARCH.md 작성
-create-ssot 스킬 폴더의 assets/ssot.md 템플릿을 `spec/ssot/ARCH.md`로 복사해 시작한다(r1). ARCH-n 결정으로: 스택 / 폴더 구조(트리 압축) / 데이터 저장·스키마 원칙 / 코드 컨벤션(네이밍·상태관리·에러 처리) / 테스트 정책 / verify 명령(test·lint·format) / CI/CD / 배포. 근거(←)는 트레이드오프가 있던 결정에만 붙인다. 폴더 구조·컨벤션처럼 항목이 여러 개인 결정은 한 줄로 늘이지 말고 결정 블록(2칸 들여쓴 하위 항목·표)으로 편다. verify 명령은 백틱 코드로, 설명을 섞지 않은 실행 가능한 형태 그대로 적는다. 테스트가 많아 전체 실행이 느린 프로젝트면 검증 단계를 결정 블록으로 나눈다: 태스크(그 태스크가 추가·수정한 테스트와 영향받는 기존 테스트 + 빠른 lint·타입 검사) / 단위 통합(전체 test — 작업 묶음의 `work integrate --verify`) / 묶음 완료·push 전(CI 재현 — `work finish --verify`). 단계를 나누지 않으면 모든 태스크가 verify 전체를 실행한다. **테스트는 기본 의무** — 빼려면 ARCH에 명시적 [o] 결정으로만 가능하고, 그 결정이 없으면 모든 태스크의 acceptance에 테스트가 요구된다.
+create-ssot 스킬 폴더의 assets/ssot.md 템플릿을 `spec/ssot/ARCH.md`로 복사해 시작한다(r1). ARCH-n 결정으로: 스택 / 폴더 구조(트리 압축) / 데이터 저장·스키마 원칙 / 코드 컨벤션(네이밍·상태관리·에러 처리) / 테스트 정책 / verify 명령(test·lint·format) / CI/CD / 배포. 근거(←)는 트레이드오프가 있던 결정에만 붙인다. 폴더 구조·컨벤션처럼 항목이 여러 개인 결정은 한 줄로 늘이지 말고 결정 블록(2칸 들여쓴 하위 항목·표)으로 편다. verify 명령은 백틱 코드로, 설명을 섞지 않은 실행 가능한 형태 그대로 적는다. 테스트가 많아 전체 실행이 느린 프로젝트면 검증 단계를 결정 블록으로 나눈다: 태스크(그 태스크가 추가·수정한 테스트와 영향받는 기존 테스트 + 빠른 lint·타입 검사) / 단위 통합(전체 test — 작업 묶음의 `work integrate --verify`) / 묶음 완료·push 전(CI 재현 — `work finish --verify`). 단계를 나누지 않으면 모든 태스크가 verify 전체를 실행한다. 태스크 단계 명령은 CLI가 넘겨주는 `$HAERAM_DIFF_BASE`로 영향받는 테스트를 고를 수 있다(예 `git diff --name-only "$HAERAM_DIFF_BASE" HEAD`를 테스트 러너의 related/changed 옵션에 전달). **테스트는 기본 의무** — 빼려면 ARCH에 명시적 [o] 결정으로만 가능하고, 그 결정이 없으면 모든 태스크의 acceptance에 테스트가 요구된다.
 
 ## 4. 마감
 - STATE: ssot 행 `ARCH | 1 | 0 | all | <[?] 수>` (스캐폴딩도 태스크로 만들 것이므로 tasked=0), next = 기획 SSOT 없으면 `create-ssot`, 있으면 `create-task ARCH`, log 1줄.

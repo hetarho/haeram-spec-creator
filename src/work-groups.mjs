@@ -48,6 +48,12 @@ function noOperation(group) {
   if (group.operation) fail('작업 묶음에서 통합 명령이 실행 중입니다.', [JSON.stringify(group.operation)])
 }
 
+// Only integration, sync and finish move the group branch, so only they exclude each other.
+// Claims, submissions and reviews keep going while a long integration check runs.
+function notIntegrating(group, attempt) {
+  if (group.operation?.attempt === attempt.id) fail('이 실행을 통합하는 명령이 진행 중입니다.', [JSON.stringify(group.operation)])
+}
+
 function requireStopped(processInfo) {
   if (!processInfo || processInfo.host !== os.hostname()) fail('이 호스트에서 중단 여부를 확인할 수 없는 명령입니다.')
   try { process.kill(processInfo.pid, 0); fail('명령 프로세스가 아직 실행 중입니다.') } catch (error) { if (error.code !== 'ESRCH') throw error }
@@ -163,6 +169,23 @@ function commands(options, key = 'verify', optional = false) {
   return values
 }
 
+// Verification commands live on the group so any session, runner or background gate
+// runs the right tier without repeating them. Explicit --verify still wins.
+function storedChecks(options) {
+  const verify = {}
+  for (const [tier, key] of [['task', 'taskVerify'], ['unit', 'verify'], ['group', 'groupVerify']]) {
+    if (options[key] !== undefined) verify[tier] = commands(options, key, true)
+  }
+  return verify
+}
+
+function tierChecks(options, group, tier) {
+  if (tier === 'task') return options.verify !== undefined ? commands(options, 'verify', true) : group.verify?.task ?? []
+  if (options.verify?.length) return commands(options)
+  if (group.verify?.[tier]?.length) return group.verify[tier]
+  return fail(`실행할 검증 명령을 --verify로 지정하거나 work start/configure에 ${tier === 'unit' ? '--verify' : '--group-verify'}로 저장하세요.`)
+}
+
 // Full suites run at unit integration and group finish, so a single check may be long.
 function verifyTimeout(options) {
   const value = Number(options.verifyTimeoutMs ?? 60 * 60 * 1000)
@@ -170,12 +193,15 @@ function verifyTimeout(options) {
   return value
 }
 
-async function verify(root, checks, commit, signal, timeout = 60 * 60 * 1000) {
+// HAERAM_DIFF_BASE lets one stored command select only the affected tests, e.g.
+// `git diff --name-only "$HAERAM_DIFF_BASE" HEAD`, so the host verifies the impact itself.
+async function verify(root, checks, commit, signal, timeout = 60 * 60 * 1000, scope = {}) {
   const results = []
+  const env = { ...process.env, ...Object.fromEntries(Object.entries(scope).map(([key, value]) => [`HAERAM_${key}`, String(value)])) }
   for (const command of checks) {
     const startedAt = now()
     try {
-      const { stdout, stderr } = await execute(command, { cwd: root, maxBuffer: 8 * 1024 * 1024, timeout, signal })
+      const { stdout, stderr } = await execute(command, { cwd: root, maxBuffer: 8 * 1024 * 1024, timeout, signal, env })
       results.push({ command, startedAt, finishedAt: now(), stdout: stdout.slice(-16000), stderr: stderr.slice(-16000) })
     } catch (error) {
       fail(`검증 실패: ${command}`, [(error.stderr || error.stdout || error.message).slice(-16000)])
@@ -184,6 +210,17 @@ async function verify(root, checks, commit, signal, timeout = 60 * 60 * 1000) {
     await requireClean(root)
   }
   return results
+}
+
+// An approval survives a moved target when nothing that moved touches the submission's
+// files or SSOT. The merged result is still fully verified at integration.
+async function approvalHolds(root, review, target) {
+  if (!review?.baseCommit || review.baseCommit === target) return Boolean(review?.baseCommit)
+  if (!(await ancestor(root, review.baseCommit, target))) return false
+  const changed = async (...range) => (await git(root, ['diff', '--name-only', '-z', ...range])).split('\0').filter(Boolean)
+  const own = new Set(await changed(`${review.baseCommit}...${review.commit}`))
+  const moved = (await changed(review.baseCommit, target)).filter((file) => file !== 'spec/STATE.md' && !file.startsWith('spec/work/'))
+  return !moved.some((file) => own.has(file) || file.startsWith('spec/ssot/'))
 }
 
 export async function inspectWork(options = {}) {
@@ -203,6 +240,7 @@ export async function inspectWork(options = {}) {
 export async function startWork(options) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(options.name ?? '') || options.name.length > 60) fail('작업 이름은 60자 이하의 kebab-case로 지정하세요.')
   const context = await repository(options)
+  storedChecks(options)
   const mode = options.workspace ?? 'auto'
   if (!['auto', 'new', 'current'].includes(mode)) fail('workspace는 auto, current, new 중 하나여야 합니다.')
   const adopted = mode === 'current' || (mode === 'auto' && context.workspace.git.isLinkedWorktree && !options.path && !options.base && !options.branch)
@@ -217,7 +255,7 @@ export async function startWork(options) {
   // Avoid silently omitting the user's uncommitted planning documents.
   await requireClean(context.cwd)
   const target = adopted ? context.cwd : await destination(context, `${options.name}-plan`, options.path)
-  const group = { id: options.name, branch, baseRef, baseCommit, path: target, managed: !adopted, status: 'preparing', creator: creator(), createdAt: now(), limits: workLimits(options) }
+  const group = { id: options.name, branch, baseRef, baseCommit, path: target, managed: !adopted, status: 'preparing', creator: creator(), createdAt: now(), limits: workLimits(options), verify: storedChecks(options) }
   await transaction(context.root, (state) => {
     if (Object.hasOwn(state.groups, group.id)) fail('같은 이름의 작업 묶음이 이미 있습니다. work status를 확인하세요.')
     if (Object.values(state.groups).some((entry) => entry.branch === branch || entry.path === target)) fail('이미 사용 중인 기획 브랜치 또는 작업 공간입니다.')
@@ -235,6 +273,17 @@ export async function startWork(options) {
     await transaction(context.root, (state) => { Object.assign(state.groups[group.id], { status: 'failed', error: error.message }) })
     throw new SkillPackageError('작업 공간 준비에 실패했습니다. 현재 작업 공간은 전환하지 않았습니다. 남은 경로/브랜치를 확인하세요.', [target, branch, error.message])
   }
+}
+
+export async function configureWork(options) {
+  const verify = storedChecks(options)
+  if (!Object.keys(verify).length) fail('저장할 검증 명령을 --task-verify, --verify, --group-verify로 지정하세요.')
+  const context = await repository(options)
+  return transaction(context.root, (state) => {
+    const group = groupOf(state, options.work)
+    group.verify = { ...group.verify, ...verify }
+    return group
+  })
 }
 
 export async function claimWork(options) {
@@ -283,7 +332,6 @@ async function claimTask(options, next = false) {
   const selected = await transaction(context.root, async (state) => {
     const live = groupOf(state, group.id)
     const idle = (reason) => { if (!next) fail(reason); return { idle: true, reason, skipped } }
-    if (live.operation) return idle('integration-in-progress')
     if (await head(context.cwd, `refs/heads/${group.branch}`) !== commit || candidates.some((entry) => entry.commit !== commit)) return idle('planning-changed; retry')
     const all = Object.values(state.attempts)
     const local = all.filter((entry) => entry.group === group.id)
@@ -325,7 +373,7 @@ export async function updateWork(options) {
   const context = await repository(options)
   return transaction(context.root, (state) => {
     const attempt = attemptOf(state, options.attempt)
-    noOperation(groupOf(state, attempt.group))
+    notIntegrating(groupOf(state, attempt.group), attempt)
     if (!['doing', 'blocked', 'ready', 'approved', 'changes_requested'].includes(attempt.status)) fail(`이 실행은 갱신할 수 없습니다: ${attempt.status}`)
     if (options.status && !['doing', 'blocked'].includes(options.status)) fail('상태는 doing 또는 blocked만 지정할 수 있습니다. ready는 submit으로 검증합니다.')
     if (options.status === 'blocked' && !options.reason?.trim()) fail('blocked에는 --reason이 필요합니다.')
@@ -345,7 +393,7 @@ export async function releaseWork(options) {
   const context = await repository(options)
   return transaction(context.root, (state) => {
     const attempt = attemptOf(state, options.attempt)
-    noOperation(groupOf(state, attempt.group))
+    notIntegrating(groupOf(state, attempt.group), attempt)
     if (!['doing', 'blocked', 'ready', 'approved', 'changes_requested', 'preparing', 'failed'].includes(attempt.status)) fail(`이 실행은 해제할 수 없습니다: ${attempt.status}`)
     if (attempt.status === 'preparing') requireStopped(attempt.creator)
     invalidateReview(attempt, 'attempt released')
@@ -361,7 +409,8 @@ async function reserve(context, attemptId, operation, allowed) {
   return transaction(context.root, (state) => {
     const attempt = attemptOf(state, attemptId)
     const group = groupOf(state, attempt.group)
-    noOperation(group)
+    if (operation === 'integrating') noOperation(group)
+    else notIntegrating(group, attempt)
     if (!allowed.includes(attempt.status)) fail(`${operation}할 수 없는 상태입니다: ${attempt.status}`)
     if (operation === 'integrating' && (attempt.review?.status !== 'approved' || attempt.review.commit !== attempt.verifiedCommit)) fail('현재 제출 커밋에 대한 리뷰 승인이 필요합니다.')
     if (operation === 'verifying' && !workerBusy(attempt) && Object.values(state.attempts).filter((entry) => entry.group === attempt.group && workerBusy(entry)).length >= workLimits(group.limits).workers) fail('worker-capacity')
@@ -408,17 +457,26 @@ export async function commitWorkerWork(options) {
 // Task-level checks are optional: the worker runs the tests its change touches, while
 // full suites belong to unit integration and group finish.
 export async function submitWork(options) {
-  const checks = commands(options, 'verify', true)
+  if (options.verify !== undefined) commands(options, 'verify', true)
   const timeout = verifyTimeout(options)
   const context = await repository(options)
   const reservation = await reserve(context, options.attempt, 'verifying', ['doing', 'blocked', 'ready', 'approved', 'changes_requested'])
   try {
+    const checks = tierChecks(options, reservation.group, 'task')
     const current = await checkWorker(context, reservation.group, reservation.attempt)
-    const verification = await verify(reservation.attempt.workspace, checks, current.workerCommit, options.signal, timeout)
+    const { attempt } = reservation
+    const ids = unitTasks(attempt)
+    // A first submission diffs from the previous lane step; a resubmission covers the whole unit.
+    const previous = (attempt.steps ?? []).some((entry) => entry.taskId === attempt.taskId) ? null
+      : (attempt.steps ?? []).find((entry) => entry.taskId === ids[ids.indexOf(attempt.taskId) - 1])?.commit
+    const diffBase = previous ?? (await git(context.cwd, ['merge-base', current.commit, current.workerCommit])).trim()
+    const verification = await verify(attempt.workspace, checks, current.workerCommit, options.signal, timeout,
+      { TIER: 'task', DIFF_BASE: diffBase, TASK: attempt.taskId, TASKS: ids.join(' ') })
     await assertWorkspace(context, reservation.attempt)
-    if (await head(context.cwd, `refs/heads/${reservation.group.branch}`) !== current.commit) fail('검증 중 상위 브랜치가 변경됐습니다. 최신 기준을 확인하고 다시 제출하세요.')
+    // Another unit may integrate meanwhile; the contract and SSOT must still match the new target.
+    const latest = await checkWorker(context, reservation.group, reservation.attempt)
+    if (latest.workerCommit !== current.workerCommit) fail('검증 중 워커 HEAD가 바뀌었습니다. 다시 제출하세요.')
     options.signal?.throwIfAborted()
-    const ids = unitTasks(reservation.attempt)
     const position = ids.indexOf(reservation.attempt.taskId)
     const step = { taskId: reservation.attempt.taskId, commit: current.workerCommit, verification: progressChecks(verification), at: now() }
     const steps = (attempt) => [...(attempt.steps ?? []).filter((entry) => entry.taskId !== step.taskId), step]
@@ -430,7 +488,7 @@ export async function submitWork(options) {
     }
     await git(context.cwd, ['update-ref', `refs/haeram/attempts/${reservation.attempt.id}`, current.workerCommit])
     return await finishOperation(context, reservation, (attempt) => Object.assign(attempt, {
-      status: 'ready', submissionId: randomUUID(), verifiedCommit: current.workerCommit, submittedBase: current.commit, verification, steps: steps(attempt), submittedAt: now(), reason: null,
+      status: 'ready', submissionId: randomUUID(), verifiedCommit: current.workerCommit, submittedBase: latest.commit, verification, steps: steps(attempt), submittedAt: now(), reason: null,
     }))
   } catch (error) {
     await finishOperation(context, reservation, (attempt) => Object.assign(attempt, { status: 'blocked', reason: error.message }))
@@ -477,9 +535,11 @@ async function archiveTasks(root, tasks, attempt, integration) {
 }
 
 export async function integrateWork(options) {
-  const checks = commands(options)
+  if (options.verify?.length) commands(options)
   const timeout = verifyTimeout(options)
   const context = await repository(options)
+  const initial = await readRuntime(context.root)
+  const checks = tierChecks(options, groupOf(initial, attemptOf(initial, options.attempt).group), 'unit')
   const reservation = await reserve(context, options.attempt, 'integrating', ['approved'])
   const { attempt, group } = reservation
   let candidate
@@ -488,7 +548,7 @@ export async function integrateWork(options) {
     await assertWorkspace(context, group)
     await requireClean(group.path)
     const current = await checkWorker(context, group, attempt)
-    if (attempt.review.baseCommit !== current.commit) {
+    if (!(await approvalHolds(context.cwd, attempt.review, current.commit))) {
       await finishOperation(context, reservation, (entry) => { invalidateReview(entry, 'integration base changed'); entry.status = 'ready'; entry.reason = 'review-base-changed' })
       fail('상위 브랜치가 리뷰 이후 변경됐습니다. 최신 기준으로 재리뷰하세요.')
     }
@@ -512,7 +572,8 @@ export async function integrateWork(options) {
     await git(candidate, ['add', '--', 'spec/STATE.md', historyFile, ...tasks.flatMap((task) => [task.file, `spec/tasks/done/${path.basename(task.file)}`])])
     await git(candidate, ['commit', '-m', `Integrate ${attempt.lane ? `lane ${attempt.lane} (${tasks.map((task) => task.id).join(' ')})` : attempt.taskId} into ${group.id}`])
     const candidateCommit = await head(candidate)
-    const verification = await verify(candidate, checks, candidateCommit, options.signal, timeout)
+    const verification = await verify(candidate, checks, candidateCommit, options.signal, timeout,
+      { TIER: 'unit', DIFF_BASE: current.commit, TASKS: tasks.map((task) => task.id).join(' ') })
     await assertWorkspace(context, group)
     await requireClean(group.path)
     if (await head(group.path) !== current.commit) fail('검증 중 상위 브랜치가 이동했습니다. 새 기준으로 다시 통합하세요.')
@@ -530,10 +591,18 @@ export async function integrateWork(options) {
       const latest = (await readRuntime(context.root)).attempts[attempt.id]
       if (latest.operation?.token === reservation.token) {
         const sameWorker = await head(attempt.workspace).catch(() => null) === attempt.verifiedCommit && await clean(attempt.workspace).catch(() => false)
-        const sameBase = await head(group.path).catch(() => null) === attempt.review.baseCommit
+        const target = await head(group.path).catch(() => null)
+        const sameBase = Boolean(target) && await approvalHolds(context.cwd, attempt.review, target).catch(() => false)
         await finishOperation(context, reservation, (entry) => {
           if (!sameWorker || !sameBase) invalidateReview(entry, 'review snapshot changed')
-          Object.assign(entry, { status: !sameWorker ? 'blocked' : sameBase ? 'approved' : 'ready', reason: error.message })
+          // The background gate hands a failed merge or check back to the unit's owner as a correction.
+          if (options.autoCorrect && sameWorker && candidate) {
+            invalidateReview(entry, 'integration failed')
+            entry.review = { id: randomUUID(), status: 'changes_requested', verdict: 'changes_requested', owner: 'integration', commit: attempt.verifiedCommit, baseCommit: target,
+              summary: 'Integration failed on the merged candidate.', findings: [{ priority: 'P1', where: 'integration',
+                message: `Merge the group branch into this workspace, fix the failure, and resubmit: ${[error.message, ...(error.details ?? [])].join('\n').slice(-4000)}` }], finishedAt: now() }
+            Object.assign(entry, { status: 'changes_requested', reason: 'integration failed' })
+          } else Object.assign(entry, { status: !sameWorker ? 'blocked' : sameBase ? 'approved' : 'ready', reason: error.message })
         })
       }
     }
@@ -664,9 +733,10 @@ async function groupVerification(context, group) {
 
 // The group gate runs the full verification once, after every unit is integrated.
 export async function finishWork(options) {
-  const checks = commands(options)
+  if (options.verify?.length) commands(options)
   const timeout = verifyTimeout(options)
   const context = await repository(options)
+  const checks = tierChecks(options, groupOf(await readRuntime(context.root), options.work), 'group')
   const token = randomUUID()
   const group = await transaction(context.root, (state) => {
     const entry = groupOf(state, options.work)
@@ -686,12 +756,19 @@ export async function finishWork(options) {
     if (!board.ok || board.warnings.length) fail('작업 브랜치의 태스크/STATE를 먼저 정리하세요.', [...board.errors, ...board.warnings])
     const remaining = board.tasks.filter((task) => !task.st?.startsWith('blocked@'))
     if (remaining.length) fail('남은 태스크가 있습니다. 모두 통합한 뒤 finish하세요.', remaining.map((task) => `${task.id} ${task.st}`))
-    const verification = await verify(group.path, checks, commit, options.signal, timeout)
+    let verification
+    try {
+      verification = await verify(group.path, checks, commit, options.signal, timeout, { TIER: 'group', DIFF_BASE: group.baseCommit })
+    } catch (error) {
+      await transaction(context.root, (state) => { groupOf(state, group.id).finishFailure = { commit, error: [error.message, ...(error.details ?? [])].join('\n').slice(-4000), at: now() } })
+      throw error
+    }
     verified = { commit, checks: progressChecks(verification), at: now(), excluded: board.tasks.map((task) => task.id) }
     await transaction(context.root, (state) => {
       const entry = groupOf(state, group.id)
       if (entry.operation?.token !== token) fail('finish 소유권이 변경됐습니다.')
       entry.verified = verified
+      delete entry.finishFailure
     })
   } finally {
     await transaction(context.root, (state) => {
@@ -799,4 +876,4 @@ export async function unlockWork(options) {
 }
 
 // Shared protocol primitives; only public lifecycle APIs are re-exported by index.mjs.
-export const workInternals = { repository, groupOf, attemptOf, noOperation, requireStopped, destination, requireClean, assertWorkspace, checkWorker, head, clean, now, creator, fail, verify, commands }
+export const workInternals = { repository, groupOf, attemptOf, noOperation, notIntegrating, requireStopped, destination, requireClean, assertWorkspace, checkWorker, head, clean, now, creator, fail, verify, commands, tierChecks, approvalHolds, groupVerification }

@@ -10,7 +10,7 @@ import { claimReview, finishReview, releaseReview, resumeWork } from './work-rev
 import { readRuntime, transaction } from './work-runtime.mjs'
 import { workLimits, activeAttempt } from './work-policy.mjs'
 
-const { repository, groupOf, attemptOf, now, fail, requireStopped, commands } = workInternals
+const { repository, groupOf, attemptOf, now, fail, requireStopped, commands, tierChecks } = workInternals
 
 export async function recoverRunner(options) {
   const context = await repository(options)
@@ -59,11 +59,13 @@ async function adapterConfig(options) {
 // Three verification tiers: taskVerify at every task submission (optional, fast),
 // verify at every unit integration, groupVerify once after the last integration.
 export async function runWork(options) {
-  const verify = commands(options)
-  const taskVerify = commands(options, 'taskVerify', true)
-  const groupVerify = commands(options, 'groupVerify', true)
+  for (const key of ['verify', 'taskVerify', 'groupVerify']) if (options[key] !== undefined) commands(options, key, true)
   const config = await adapterConfig(options)
   const context = await repository(options)
+  const stored = groupOf(await readRuntime(context.root), options.work)
+  const verify = tierChecks(options, stored, 'unit')
+  const taskVerify = options.taskVerify ?? stored.verify?.task ?? []
+  const groupVerify = options.groupVerify ?? stored.verify?.group ?? []
   if (options.dryRun) {
     const group = groupOf(await readRuntime(context.root), options.work)
     return { schemaVersion: 1, dryRun: true, work: group.id, limits: workLimits(group.limits), adapter: config, verify, taskVerify, groupVerify, modelRequests: 0 }

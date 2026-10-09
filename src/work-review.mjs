@@ -5,7 +5,7 @@ import { readRuntime, transaction } from './work-runtime.mjs'
 import { workInternals } from './work-groups.mjs'
 import { workLimits, invalidateReview, workerBusy, unitTasks } from './work-policy.mjs'
 
-const { repository, groupOf, attemptOf, noOperation, destination, requireClean, checkWorker, head, now, fail } = workInternals
+const { repository, groupOf, attemptOf, notIntegrating, destination, requireClean, checkWorker, head, now, fail, approvalHolds } = workInternals
 
 export async function claimReview(options) {
   if (!options.owner?.trim()) fail('review-claim에는 --owner가 필요합니다.')
@@ -17,11 +17,10 @@ export async function claimReview(options) {
   const workspace = await destination(context, `${group.id}-review-${id.slice(0, 8)}`)
   const selected = await transaction(context.root, async (live) => {
     const currentGroup = groupOf(live, group.id)
-    if (currentGroup.operation) return { idle: true, reason: 'integration-in-progress' }
     if (await head(context.cwd, `refs/heads/${group.branch}`) !== baseCommit) return { idle: true, reason: 'planning-changed; retry' }
     const attempts = Object.values(live.attempts).filter((entry) => entry.group === group.id)
-    // A base advance invalidates the old approval, even when the merge is textual-clean.
-    for (const entry of attempts) if (entry.status === 'approved' && entry.review?.baseCommit !== baseCommit) {
+    // A base advance invalidates the old approval only when it touches the same files or SSOT.
+    for (const entry of attempts) if (entry.status === 'approved' && !(await approvalHolds(context.cwd, entry.review, baseCommit))) {
       invalidateReview(entry, 'review base changed'); entry.status = 'ready'
     }
     if (attempts.filter((entry) => entry.status === 'reviewing').length >= workLimits(currentGroup.limits).reviewers) return { idle: true, reason: 'reviewer-capacity' }
@@ -75,7 +74,7 @@ export async function releaseReview(options) {
   const context = await repository(options)
   return transaction(context.root, (state) => {
     const attempt = findReview(state, options.review)
-    noOperation(groupOf(state, attempt.group))
+    notIntegrating(groupOf(state, attempt.group), attempt)
     invalidateReview(attempt, options.reason ?? 'explicit review release; reviewer stopped')
     attempt.status = 'ready'
     return attempt
@@ -105,12 +104,12 @@ export async function finishReview(options) {
     await requireClean(review.workspace)
     if (await head(review.workspace) !== review.commit) fail('리뷰 작업 공간의 커밋이 바뀌었습니다.')
     const current = await checkWorker(context, group, attempt)
-    if (current.workerCommit !== review.commit || current.commit !== review.baseCommit) fail('리뷰 중 제출 커밋 또는 상위 브랜치가 바뀌었습니다.')
+    if (current.workerCommit !== review.commit || !(await approvalHolds(context.cwd, review, current.commit))) fail('리뷰 중 제출 커밋 또는 겹치는 상위 변경이 바뀌었습니다.')
     return await transaction(context.root, async (state) => {
       const entry = findReview(state, options.review)
-      noOperation(groupOf(state, group.id))
+      notIntegrating(groupOf(state, group.id), entry)
       if (entry.submissionId !== review.submissionId || entry.verifiedCommit !== review.commit ||
-          await head(context.cwd, `refs/heads/${group.branch}`) !== review.baseCommit || await head(entry.workspace) !== review.commit) fail('리뷰 결과의 기준 버전이 바뀌었습니다.')
+          !(await approvalHolds(context.cwd, review, await head(context.cwd, `refs/heads/${group.branch}`))) || await head(entry.workspace) !== review.commit) fail('리뷰 결과의 기준 버전이 바뀌었습니다.')
       Object.assign(entry.review, { verdict: result.verdict, summary: result.summary, findings: result.findings, status: result.verdict, finishedAt: now() })
       entry.status = result.verdict
       entry.reason = result.verdict === 'changes_requested' ? result.summary : null
@@ -135,7 +134,6 @@ export async function resumeWork(options) {
   const context = await repository(options)
   return transaction(context.root, (state) => {
     const group = groupOf(state, options.work)
-    if (group.operation) return { idle: true, reason: 'integration-in-progress' }
     const attempts = Object.values(state.attempts).filter((entry) => entry.group === group.id)
     if (attempts.filter(workerBusy).length >= workLimits(group.limits).workers) return { idle: true, reason: 'worker-capacity' }
     if (attempts.some((entry) => workerBusy(entry) && entry.owner === options.owner)) return { idle: true, reason: 'owner-busy' }

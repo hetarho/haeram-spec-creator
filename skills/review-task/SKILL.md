@@ -17,7 +17,7 @@ description: >-
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
-아래 `work ...`는 `npx haeram-spec-creator work ...`의 축약이다. 실행기가 review ID·commit·baseCommit·workspace를 제공했다면 그 배정을 사용하고 중복 선점하지 않는다.
+아래 `work ...`는 `npx haeram-spec-creator work ...`의 축약이다. 실행기나 세션 루프(`work next`의 `action:review`)가 review ID·commit·baseCommit·workspace를 제공했다면 그 배정을 사용하고 중복 선점하지 않는다. 세션 루프에서는 리뷰를 마친 뒤 루프로 돌아간다.
 
 ## 1. 리뷰 선점
 - 수동 세션은 `work review-claim --work <group> --owner <reviewer> --json`. 특정 제출물은 `--attempt <id>`. 계속 리뷰하는 세션은 `--wait 540`을 붙여 모델 호출 없이 제출을 기다린다(셸 도구 timeout을 더 길게). `complete`면 종료, `stalled`·`timeout`이면 reason을 전달한다. 반복적인 모델 호출로 빈 큐를 확인하지 않는다.
@@ -37,5 +37,5 @@ JSON 형식은 다음과 같다. findings는 승인 시 빈 배열일 수 있고
 ```
 
 - 수동 실행은 저장소 밖 파일에 JSON을 저장하고 `work review-finish --review <id> --result-file <path> --json`. runner가 결과 제출을 담당한다면 JSON만 반환하고 review-finish를 호출하지 않는다.
-- CLI는 리뷰 ID·제출 ID·커밋·상위 기준을 다시 검사한다. 기준이 바뀌어 결과가 거부되면 새 배정으로 재리뷰한다. 오래된 결과를 새 ID에 복사하지 않는다.
+- CLI는 리뷰 ID·제출 ID·커밋·상위 기준을 다시 검사한다. 리뷰 중 다른 단위가 통합돼도 바뀐 파일이 제출물과 겹치지 않으면 결과가 유지된다. 겹치는 변경으로 결과가 거부되면 새 배정으로 재리뷰한다. 오래된 결과를 새 ID에 복사하지 않는다.
 - approved 이후 통합 검증과 done 처리는 manage-work/runner가 담당한다. STATE next·태스크 파일·done 아카이브를 직접 갱신하지 않는다. novice에게는 가능해진 동작과 수정 이유, expert에게는 finding·커밋·승인 여부를 간결하게 보고한다.

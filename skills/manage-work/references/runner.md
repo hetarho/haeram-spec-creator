@@ -19,7 +19,8 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 - `--task-verify`(선택): 태스크마다 호스트가 제출 커밋에 실행하는 빠른 검사(lint·타입 검사 등). 워커는 별도로 자기 태스크가 추가·수정·영향을 준 테스트만 실행한다. 전체 스위트를 여기에 넣으면 태스크마다 전체 테스트가 돌아 단계 구분의 의미가 없다.
 - `--verify`(필수): 단위(lane 또는 lane 없는 태스크)를 통합할 때마다 merge 후보에서 한 번 실행한다. 보통 전체 test.
 - `--group-verify`(선택): 모든 단위가 통합되면 묶음 브랜치에서 한 번 실행하고 검증 커밋을 기록한다(`work board`의 `verified`). 생략하면 나중에 `work finish`로 실행한다.
-- 각 옵션은 반복할 수 있고 명령당 상한은 1시간이다(`--verify-timeout-ms`). 명령은 ARCH의 단계별 verify 결정에서 가져온다.
+- 각 옵션은 반복할 수 있고 명령당 상한은 1시간이다(`--verify-timeout-ms`). 명령은 ARCH의 단계별 verify 결정에서 가져온다. 생략하면 `work start`/`work configure`로 묶음에 저장한 명령을 쓴다.
+- 명령에는 `HAERAM_TIER`(task|unit|group), `HAERAM_DIFF_BASE`(태스크=이전 단계 커밋, 단위=통합 전 상위 커밋, 묶음=묶음 시작 커밋), `HAERAM_TASK`·`HAERAM_TASKS`가 전달된다. 예: `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 호스트가 영향받는 테스트를 직접 실행한다. 빈 선택이 통과로 끝나지 않게 명령을 구성한다.
 
 ### lane
 lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 새 에이전트를 실행하고, 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
@@ -88,7 +89,7 @@ stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 �
 
 워커가 막히면 `{"outcome":"blocked","summary":"Reason and required decision."}`. completed여도 runner가 실제 커밋·acceptance·spec 변경 범위와 검증 명령을 다시 검사한다.
 
-리뷰어는 review-task의 JSON 형식(`verdict`, `summary`, `findings`)을 반환한다. 코드가 바뀌면 재제출이 필요하고, 상위 브랜치가 바뀌면 이전 승인도 재리뷰한다. 현재 구현은 상위의 무관한 변경도 재리뷰하므로 넓은 병렬 리뷰보다 reviewer=1부터 시작한다.
+리뷰어는 review-task의 JSON 형식(`verdict`, `summary`, `findings`)을 반환한다. 코드가 바뀌면 재제출이 필요하다. 상위 브랜치가 바뀌어도 바뀐 파일이 제출물의 변경·SSOT와 겹치지 않으면 승인이 유지되고, 겹치면 재리뷰한다. 합친 결과는 통합 검증이 다시 확인한다.
 
 runner는 빈 슬롯을 채우고 수정 요청을 우선 배정하며 리뷰 대기열을 처리한다. 대기 중 모델 호출은 하지 않는다. 살아 있는 자식 프로세스의 heartbeat는 10초마다 기록하지만 에이전트의 의미 있는 진행을 보장하지는 않는다. 장시간 작업자는 board를 다시 읽고 정책 변경을 판단해야 한다.
 
@@ -100,23 +101,23 @@ runtime은 상태와 이력을 한 번의 원자적 교체로 저장한다. hear
 
 태스크가 통합될 때마다 STATE의 `## work` 요약과 `spec/work/feature.json`을 함께 저장하고, runner는 정상 완료·한도 도달·처리한 종료 신호 후 마지막 기록을 커밋한다. 상세 JSON에는 전체 이력, 워커별 도구/모델, 제출·리뷰·완료 commit 근거가 남는다. 명령 출력·PID·workspace 절대 경로·heartbeat는 문서에 내보내지 않는다. 저장 파일의 sourceCommit은 체크포인트를 만든 기준 커밋이며 파일 자신이 포함된 커밋의 SHA가 아니다. 통합 후보에는 적용 후 상태를 기록하므로 해당 태스크의 최종 integratedCommit과 통합 검사 시각은 다음 체크포인트에서 보충된다.
 
-실시간 배정의 정본은 runtime이고 STATE는 체크포인트다. 수동 실행은 `work sync --work feature --json`으로 저장한다. sync는 기준 브랜치를 이동하므로 진행 중 리뷰의 승인은 재리뷰가 필요할 수 있다. runner 실행 중 수동 sync는 거부한다. 미커밋 기획 변경이 있으면 원본을 보존하며 저장 실패를 반환한다. runner 결과의 snapshotError와 failures를 확인하고 원인을 해결한 뒤 sync한다. 강제 종료로 runner의 종료 처리가 실행되지 않았다면 기존 복구 절차로 runner·워커 종료를 확인한 뒤 sync한다. 중단된 sync 예약은 프로세스 종료 확인 후 `work recover --work feature`로 해제한다.
+실시간 배정의 정본은 runtime이고 STATE는 체크포인트다. 수동 실행은 `work sync --work feature --json`으로 저장한다. sync 커밋은 STATE와 실행 기록만 바꾸므로 승인을 무효화하지 않는다. runner 실행 중 수동 sync는 거부한다. 미커밋 기획 변경이 있으면 원본을 보존하며 저장 실패를 반환한다. runner 결과의 snapshotError와 failures를 확인하고 원인을 해결한 뒤 sync한다. 강제 종료로 runner의 종료 처리가 실행되지 않았다면 기존 복구 절차로 runner·워커 종료를 확인한 뒤 sync한다. 중단된 sync 예약은 프로세스 종료 확인 후 `work recover --work feature`로 해제한다.
 
 Git에 저장된 체크포인트는 다른 clone에도 남는다. runtime이 없는 새 clone의 `work history`는 저장된 JSON을 읽고 scope:snapshot을 반환한다. 실행 소유권을 복원하거나 과거 워커를 자동 재개하지 않는다. 기록이 이미 있는 묶음 이름은 새 clone에서도 start로 재사용할 수 없으며 새 이름으로 시작해 과거 이력을 보존한다.
 
 ## Orca 또는 다른 coordinator
 
-Orca를 사용하면 work run 대신 coordinator가 위 역할을 수행할 수 있다. [Orca 공식 orchestration 문서](https://www.onorca.dev/docs/cli/orchestration)와 설치된 CLI의 `orca skills get orchestration --full`을 확인해 실제 버전의 명령을 사용한다. Orca pane/task/dispatch를 자동으로 생성·연결하는 전용 실행 어댑터는 아직 포함하지 않는다.
+가장 단순한 연결은 **세션 루프**다. 오케스트레이터는 저장소에서 에이전트 N개를 "implement-task로 남은 태스크를 구현해줘"로 띄우기만 한다. 각 에이전트는 `work next --owner <고유 label> --wait 540`을 반복하며 응답의 `action`(implement·review·blocked·wait·complete·stalled)과 `instruction`을 따른다. 배정·리뷰 배분·통합·묶음 검증은 CLI runtime이 결정하고, 통합과 finish는 백그라운드 CLI 프로세스가 실행한다(`<git-common-dir>/haeram/v1/logs/<묶음>.log`).
+
+- 활성 묶음이 없으면 첫 에이전트의 `next --start`가 만든다. 같은 커밋에서 시작한 에이전트는 같은 묶음에 합류한다. 검증 단계 명령은 start/configure로 묶음에 저장해 둔다.
+- 오케스트레이터는 `wait`·timeout으로 끝난 에이전트를 다시 띄우고, `complete`·`stalled`면 멈춘다. 에이전트마다 owner label을 다르게 하고, 다시 띄울 때 같은 label을 쓰면 진행 중이던 단위를 이어받는다.
+- 리뷰는 자기 제출물이 아닌 에이전트가 맡는다. 에이전트가 하나뿐이면 `needs-reviewer`가 돌아오므로 리뷰용 에이전트를 하나 더 띄운다.
+
+[Orca 공식 orchestration 문서](https://www.onorca.dev/docs/cli/orchestration)와 설치된 CLI의 `orca skills get orchestration --full`로 실제 버전의 명령을 확인한다. Orca pane/task/dispatch를 자동으로 생성·연결하는 전용 어댑터는 아직 포함하지 않는다.
 
 `work doctor`는 PATH의 orca/orca-dev/orca-ide와 macOS 앱에 포함된 CLI를 검사한다. 앱만 설치해도 `/Applications/Orca.app/Contents/Resources/bin/orca`를 찾을 수 있고, 터미널에서 `orca`로 쓰려면 Settings → General → Orca CLI에서 등록한다([공식 안내](https://www.onorca.dev/docs/troubleshooting)). 다른 설치 경로는 `ORCA_CLI_COMMAND` 환경 변수로 실행 파일 경로를 지정한다. 앱 실행·PATH 수정·Orca 작업 생성은 doctor가 수행하지 않는다.
 
-1. 빈 worker 슬롯: `work next`(수정 요청 우선, 없으면 다음 단위). lane 배정은 submit이 다음 `taskId`를 돌려주는 동안 같은 공간에서 이어 실행한다. 반환된 attempt/workspace로 실행한다. 외부 도구가 이미 공간을 만들었다면 그 공간에서 `--workspace current`로 선점한다.
-2. worker 완료 알림: 알림의 dispatch↔attempt 매핑을 확인하고 `work submit` 실행. 실행 완료 메시지를 태스크 done으로 취급하지 않는다.
-3. 빈 reviewer 슬롯: `work review-claim`으로 제출물을 확보하고 반환된 고정 workspace에서 review-task를 실행한다.
-4. reviewer 완료: 정확한 review ID로 `work review-finish`. approved만 `work integrate`로 통합하고, 모든 단위가 통합되면 `work finish`로 묶음 검증을 한 번 실행한다. 상위 기준이 바뀌어 거부되면 새로운 review ID로 재검토한다.
-5. 매 완료 시 board를 다시 읽고 빈 슬롯을 채운다. 알림은 중복될 수 있으므로 runtime의 attempt/review 상태로 이미 처리한 결과를 확인한다. 재시작 후에도 runtime을 먼저 읽는다.
-
-Orca의 task/dispatch ID는 실행 추적용으로 매핑한다. 의존성 충족·선점·승인·통합 여부를 두 시스템에서 독립적으로 결정하지 않는다. 원격 실행기는 파일을 공유하지 않는 다른 clone을 같은 로컬 그룹에 연결할 수 없다.
+coordinator가 직접 역할을 나누려면 같은 CLI를 단계별로 호출한다: 빈 worker 슬롯은 `work next`, worker 완료는 `work submit`(lane이면 다음 `taskId`를 같은 공간에서 계속), 빈 reviewer 슬롯은 `work review-claim`, 리뷰 완료는 `work review-finish`. approved 통합과 finish는 next가 백그라운드로 시작하거나 coordinator가 `work integrate`/`work finish`로 실행한다. 알림은 중복될 수 있으므로 runtime의 attempt/review 상태로 처리 여부를 확인하고, 재시작 후에도 runtime을 먼저 읽는다. Orca의 task/dispatch ID는 실행 추적용으로만 매핑하고 의존성 충족·선점·승인·통합을 두 시스템에서 따로 결정하지 않는다. 원격 실행기는 파일을 공유하지 않는 다른 clone을 같은 로컬 그룹에 연결할 수 없다.
 
 ## 중단과 복구
 
