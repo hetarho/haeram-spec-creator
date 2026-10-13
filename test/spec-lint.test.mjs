@@ -509,3 +509,73 @@ test('doc-review식 분할: 새 번호를 붙여도 참조·rev·pending·완료
     assert.equal(result.warnings.some((w) => w.includes('chg')), false)
   })
 })
+
+const SESSION_STATE = STATE
+  .replace('- docs: en\n', '- docs: en\n- push: main\n')
+  .replace('| T002 | api | ARCH | T001 | todo |', '| T002 | api | ARCH | T001 | doing@261013.k3f9 |')
+  .replace('## ssot\n', '## active\n| tag | host | mode | since | at | doing |\n|---|---|---|---|---|---|\n| k3f9 | mbp | autopilot | 2026-10-13T01:00Z | 2026-10-13T02:10Z | T002 |\n\n## inbox\n- 261013 decided ARCH-2 T002: deploy target unknown → static host (alt: container | serverless)\n- 261013 parked T001: needs a force push to rewrite the release tag\n- 261013 suggest -: run review-code after five tasks\n\n## ssot\n')
+const DOING_T002 = T002.replace('st:todo', 'st:doing@261013.k3f9')
+
+test('active·inbox·cfg.push를 지킨 STATE는 통과한다', async () => {
+  await withFixture({ state: SESSION_STATE, tasks: { 'T002.api.md': DOING_T002 } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.deepEqual(result.warnings.filter((w) => /active|inbox|push/.test(w)), [])
+  })
+})
+
+test('inbox의 형식·참조와 active 행 형식이 틀리면 오류다', async () => {
+  const state = SESSION_STATE
+    .replace('- push: main', '- push: two words')
+    .replace('| k3f9 | mbp | autopilot | 2026-10-13T01:00Z | 2026-10-13T02:10Z | T002 |', '| k3f9 | mbp | solo | 26-10-13 | 2026-10-13T02:10Z | T009 |')
+    .replace('- 261013 suggest -: run review-code after five tasks', '- 261013 suggest ARCH-9 T404 review/none: missing refs\n- someday decided ARCH-1: no date')
+  await withFixture({ state, tasks: { 'T002.api.md': DOING_T002 } }, async (root) => {
+    const { errors } = await lintSpec({ targetRoot: root })
+    for (const pattern of [/cfg push/, /mode는 pair\|autopilot/, /since는 ISO UTC/, /doing T009/, /ARCH-9/, /T404/, /review\/none/, /inbox 줄 형식 오류/]) {
+      assert.ok(errors.some((error) => pattern.test(error)), `${pattern} not in ${errors.join('\n')}`)
+    }
+  })
+})
+
+test('active의 doing 태스크 tag가 다르면 경고다', async () => {
+  await withFixture({ state: SESSION_STATE.replace('doing@261013.k3f9 |', 'doing@261013.zz9 |'), tasks: { 'T002.api.md': DOING_T002.replace('k3f9', 'zz9') } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.warnings.some((w) => /active k3f9: T002의 st/.test(w)), result.warnings.join('\n'))
+  })
+})
+
+test('explore 태스크는 시간 제한 형식과 exit 줄이 필수다', async () => {
+  const explore = T002.replace('dep:T001', 'dep:T001 | explore:2h')
+  await withFixture({ tasks: { 'T002.api.md': explore } }, async (root) => {
+    const { errors } = await lintSpec({ targetRoot: root })
+    assert.ok(errors.some((error) => /exit: …/.test(error)), errors.join('\n'))
+  })
+  const withExit = explore.replace('- [ ] test covers the route', '- [ ] test covers the route\n- [ ] exit: after 2h record the measured latency in result and finish')
+  await withFixture({ tasks: { 'T002.api.md': withExit } }, async (root) => {
+    assert.deepEqual((await lintSpec({ targetRoot: root })).errors, [])
+  })
+  await withFixture({ tasks: { 'T002.api.md': withExit.replace('explore:2h', 'explore:two hours') } }, async (root) => {
+    const { errors } = await lintSpec({ targetRoot: root })
+    assert.ok(errors.some((error) => /explore 형식 오류/.test(error)), errors.join('\n'))
+  })
+})
+
+test('보고서는 파일명·제목·인용줄·골격을 검사한다', async () => {
+  const report = '# REPORT 261013-k3f9\n> mode:autopilot | host:mbp | from:2026-10-13T01:00Z | to:- | push:main\n\n## done\n- T002 api, 1a2b3c4\n\n## decided\n- ARCH-2: 정적 호스팅으로 진행\n\n## parked\n- -\n\n## checks\n- npm test: pass\n\n## next\n- inbox 확인\n'
+  const root = await mkdtemp(path.join(tmpdir(), 'spec-lint-'))
+  try {
+    await writeFixture(root)
+    await mkdir(path.join(root, 'spec/reports'), { recursive: true })
+    await writeFile(path.join(root, 'spec/reports/261013-k3f9.md'), report)
+    assert.deepEqual((await lintSpec({ targetRoot: root })).errors, [])
+    await writeFile(path.join(root, 'spec/reports/261013-k3f9.md'), report.replace('## checks', '## notes').replace('host:mbp | ', ''))
+    await writeFile(path.join(root, 'spec/reports/today.md'), report)
+    const { errors } = await lintSpec({ targetRoot: root })
+    for (const pattern of [/골격 밖 섹션이 있습니다: ## notes/, /## checks 섹션이 없습니다/, /host: 필드가 없습니다/, /today\.md: <YYMMDD>-<tag>\.md/]) {
+      assert.ok(errors.some((error) => pattern.test(error)), `${pattern} not in ${errors.join('\n')}`)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

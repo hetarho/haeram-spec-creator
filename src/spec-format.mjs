@@ -49,3 +49,15 @@ export function quoteFields(quote) {
 export function splitRefs(cell) {
   return (cell ?? '').split(/[\s,]+/).filter((ref) => ref && ref !== '-')
 }
+
+// Exploratory tasks carry a wall-clock timebox; `-` or absence means an ordinary task.
+export const EXPLORE = /^\d+[mh]$/
+export const exploreValue = (value) => value && value !== '-' ? value : null
+export const EXIT_LINE = /^- \[[ v]\] exit: \S/
+
+// Session presence and the owner's inbox (STATE ## active · ## inbox).
+export const SESSION_TAG = /^[A-Za-z0-9]{2,8}$/
+export const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z$/
+export const INBOX_LINE = /^- (\d{6}) (decided|parked|suggest) ([^:]+?): (\S.*)$/
+export const REPORT_FILE = /^(\d{6}-[A-Za-z0-9]{2,8})\.md$/
+export const REPORT_SECTIONS = ['done', 'decided', 'parked', 'checks', 'next']

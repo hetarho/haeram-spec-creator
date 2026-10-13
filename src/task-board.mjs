@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { inspectWorkspace, git } from './workspace.mjs'
-import { quoteLine, quoteFields, sections, tableRows, splitRefs, TASK_ID, TASK_ST } from './spec-format.mjs'
+import { quoteLine, quoteFields, sections, tableRows, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue } from './spec-format.mjs'
 import { touchesErrors } from './work-policy.mjs'
 import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
@@ -70,13 +70,15 @@ export async function readTaskBoard(options = {}) {
     if (graph.has(id)) errors.push(`태스크 파일 중복: ${id}`)
     if (doneIds.has(id)) errors.push(`${id}: tasks/와 tasks/done/에 파일이 모두 있습니다.`)
     for (const value of touchesErrors(fields.get('touches'))) errors.push(`${file}: touches 경로 형식 오류: ${value}`)
+    const explore = exploreValue(fields.get('explore'))
+    if (explore && !EXPLORE.test(explore)) errors.push(`${file}: explore 형식 오류: ${explore}`)
     const deps = splitRefs(fields.get('dep'))
     const lane = laneValue(fields.get('lane'))
     graph.set(id, deps)
     lanes.set(id, lane)
     tasks.push({ id, title: title?.[2] ?? id, file: `spec/tasks/${file}`, st,
       ssot: splitRefs(fields.get('ssot')), base: splitRefs(fields.get('base')),
-      touches: splitRefs(fields.get('touches')), lane, deps, waitingOn: deps.filter((dep) => !doneIds.has(dep)), dependencyReady: false,
+      touches: splitRefs(fields.get('touches')), lane, explore, deps, waitingOn: deps.filter((dep) => !doneIds.has(dep)), dependencyReady: false,
     })
   }
   errors.push(...dependencyErrors(graph, doneIds))

@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST } from './spec-format.mjs'
+import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue, EXIT_LINE, SESSION_TAG, ISO_UTC, INBOX_LINE, REPORT_FILE, REPORT_SECTIONS } from './spec-format.mjs'
 import { touchesErrors } from './work-policy.mjs'
 import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
@@ -146,6 +146,10 @@ export async function lintSpec({ targetRoot } = {}) {
   if (!level) errors.push('STATE cfg에 level이 없습니다.')
   else if (!LEVELS.has(level)) errors.push(`cfg level 값이 잘못됐습니다: ${level} (expert|mid|novice|?)`)
   else if (level === '?') warnings.push('cfg level이 ?입니다 — create-architecture 캘리브레이션 미완.')
+  const push = cfg.get('push')
+  if (push !== undefined && !['-', '?'].includes(push) && !/^[A-Za-z0-9._/-]+$/.test(push)) {
+    errors.push(`cfg push 값이 잘못됐습니다: ${push || '(빈 값)'} (브랜치 이름|-|?)`)
+  }
 
   // ssot
   const ssotRows = tableRows(stateSections.get('ssot'))
@@ -368,6 +372,12 @@ export async function lintSpec({ targetRoot } = {}) {
     if (fields.get('st') && fields.get('st') !== st) {
       warnings.push(`${id}: 파일 st(${fields.get('st')})와 STATE st(${st})가 다릅니다 — 진행 상태의 진실은 STATE.`)
     }
+    // 탐색형 태스크는 시간 제한과 종료 조건 없이 시작할 수 없다(돌려 보고 정하는 일은 끝이 정해져 있어야 한다).
+    const explore = exploreValue(fields.get('explore'))
+    if (explore && !EXPLORE.test(explore)) errors.push(`tasks/${file}: explore 형식 오류: ${explore} (<N>m|<N>h|-)`)
+    if (explore && !(sections(content).get('acceptance') ?? []).some((line) => EXIT_LINE.test(line))) {
+      errors.push(`tasks/${file}: explore 태스크에는 acceptance의 \`- [ ] exit: …\` 줄(시간이 다 됐을 때 무엇을 기록하고 끝내는지)이 필요합니다.`)
+    }
     for (const ref of splitRefs(fields.get('ssot'))) {
       const parsed = ref.match(/^([A-Z]{2,6})-(\d+)$/)
       if (!parsed) {
@@ -501,6 +511,81 @@ export async function lintSpec({ targetRoot } = {}) {
       const target = stateSections.has('review') ? errors : warnings
       target.push(`review/${file}이 STATE review 표에 없습니다.`)
     }
+  }
+
+  // active (optional): 실행 중인 세션 한 줄씩. 원격에 push돼 다른 기기가 진행을 알아챈다.
+  const activeRows = stateSections.has('active') ? tableRows(stateSections.get('active')) : []
+  const activeTags = new Set()
+  const stByTask = new Map(taskRows.map((row) => [row[0], row[4]]))
+  for (const row of activeRows) {
+    const [tag, host, mode, since, at, doing] = row
+    if (row.length !== 6) {
+      errors.push(`active 행 형식 오류: | ${row.join(' | ')} | (tag|host|mode|since|at|doing)`)
+      continue
+    }
+    if (!SESSION_TAG.test(tag)) errors.push(`active tag 형식 오류: ${tag} (영숫자 2-8자)`)
+    if (activeTags.has(tag)) errors.push(`active tag 중복: ${tag}`)
+    activeTags.add(tag)
+    if (!host || host === '-') errors.push(`active ${tag}: host가 없습니다.`)
+    if (!['pair', 'autopilot'].includes(mode)) errors.push(`active ${tag}: mode는 pair|autopilot입니다: ${mode}`)
+    for (const [name, value] of [['since', since], ['at', at]]) {
+      if (!ISO_UTC.test(value ?? '')) errors.push(`active ${tag}: ${name}는 ISO UTC(2026-10-13T07:44Z)여야 합니다: ${value}`)
+    }
+    if (doing !== '-') {
+      if (!TASK_ID.test(doing ?? '') || !taskIds.has(doing)) errors.push(`active ${tag}: doing ${doing}가 STATE tasks 표에 없습니다.`)
+      else if (stByTask.get(doing) !== undefined && !new RegExp(`^doing@\\d{6}\\.${tag}$`).test(stByTask.get(doing))) {
+        warnings.push(`active ${tag}: ${doing}의 st(${stByTask.get(doing)})가 doing@날짜.${tag}가 아닙니다.`)
+      }
+    }
+  }
+
+  // inbox (optional): 맡김 모드가 내린 잠정 결정·주차한 일. 참조는 실제로 있는 ID여야 한다.
+  for (const line of stateSections.get('inbox') ?? []) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    const entry = trimmed.match(INBOX_LINE)
+    if (!entry) {
+      errors.push(`inbox 줄 형식 오류: "${trimmed.slice(0, 60)}" (- YYMMDD decided|parked|suggest <refs>: <text>)`)
+      continue
+    }
+    const refs = splitRefs(entry[3])
+    if (refs.length === 0 && entry[3].trim() !== '-') errors.push(`inbox 참조가 비어 있습니다: "${trimmed.slice(0, 60)}"`)
+    for (const ref of refs) {
+      const decision = ref.match(/^([A-Z]{2,6})-(\d+)$/)
+      const doc = ref.match(/^(review|ideation)\/(.+)$/)
+      if (decision) {
+        if (!ssotInfo.get(decision[1])?.decisions.has(Number(decision[2]))) errors.push(`inbox: 존재하지 않는 결정 참조: ${ref}`)
+      } else if (TASK_ID.test(ref)) {
+        if (!taskIds.has(ref) && !doneIds.has(ref)) errors.push(`inbox: ${ref}가 tasks 표에도 tasks/done/에도 없습니다.`)
+      } else if (doc) {
+        const files = doc[1] === 'review' ? reviewFiles : ideationFiles
+        if (!files.includes(`${doc[2]}.md`)) errors.push(`inbox: ${ref} 문서가 없습니다.`)
+      } else errors.push(`inbox: 알 수 없는 참조: ${ref} (<ID>-n|T###|review/<slug>|ideation/<slug>|-)`)
+    }
+  }
+
+  // reports (optional): 맡김 세션마다 owner가 읽는 보고서. 골격만 검사한다(본문은 cfg.lang 산문).
+  for (const file of (await listIfExists(path.join(specRoot, 'reports'))).filter((f) => f.endsWith('.md'))) {
+    const named = file.match(REPORT_FILE)
+    if (!named) {
+      errors.push(`reports/${file}: <YYMMDD>-<tag>.md 형식이 아닙니다.`)
+      continue
+    }
+    const content = (await readIfExists(path.join(specRoot, 'reports', file))) ?? ''
+    if (!new RegExp(`^# REPORT ${named[1]}\\s*$`, 'm').test(content)) errors.push(`reports/${file}: 제목이 '# REPORT ${named[1]}'가 아닙니다.`)
+    const fields = quoteFields(quoteLine(content) ?? '')
+    for (const key of ['mode', 'host', 'from', 'to', 'push']) {
+      if (!fields.has(key)) errors.push(`reports/${file}: 인용줄에 ${key}: 필드가 없습니다.`)
+    }
+    const names = [...sections(content).keys()]
+    for (const name of names) {
+      if (!REPORT_SECTIONS.includes(name)) errors.push(`reports/${file}: FORMAT 골격 밖 섹션이 있습니다: ## ${name}`)
+    }
+    for (const name of REPORT_SECTIONS) {
+      if (!names.includes(name)) errors.push(`reports/${file}에 ## ${name} 섹션이 없습니다.`)
+    }
+    const order = names.filter((name) => REPORT_SECTIONS.includes(name))
+    if (order.join(' ') !== REPORT_SECTIONS.filter((name) => order.includes(name)).join(' ')) warnings.push(`reports/${file} 섹션 순서가 골격과 다릅니다.`)
   }
 
   // next / log

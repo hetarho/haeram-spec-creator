@@ -1,5 +1,5 @@
 # T<###> <title>
-> st:todo | ssot:<ID>-<n> <ID>-<n> | base:<ID>@<rev> | dep:- | touches:- | lane:-
+> st:todo | ssot:<ID>-<n> <ID>-<n> | base:<ID>@<rev> | dep:- | touches:- | lane:- | explore:-
 
 ## goal
 <one line>
