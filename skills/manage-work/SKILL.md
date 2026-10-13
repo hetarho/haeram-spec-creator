@@ -14,7 +14,7 @@ description: >-
 1. 먼저 spec/STATE.md를 읽는다. 없으면 중단하고 create-architecture 실행을 안내한다.
 2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
-4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
+4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
 아래 `work ...`는 모두 `npx haeram-spec-creator work ...`의 축약이다. CLI가 `work`를 지원하는 버전인지 확인한다. 직접 runtime JSON을 편집하지 않는다. `--verify`는 ARCH의 실제 검증 명령을 셸로 실행한다.
@@ -22,6 +22,8 @@ description: >-
 ## 1. 작업 묶음 시작
 - 현재 `work status --json`에 활성 묶음이 있으면 이어 쓴다. 사용자가 작은 수정만 요청했다면 작업 묶음을 강제하지 않는다.
 - `work start <slug> --workspace auto --task-verify '<태스크 단계>' --verify '<단위 통합>' --group-verify '<묶음 완료>' --json`. 검증 명령은 ARCH의 단계별 verify 결정에서 가져와 묶음에 저장한다 — 이후 submit·integrate·finish·run과 세션 루프가 기본값으로 쓴다. 바꿀 때는 `work configure`. 명령에는 `HAERAM_TIER`·`HAERAM_DIFF_BASE`·`HAERAM_TASK(S)`가 전달되므로 태스크 단계는 `git diff --name-only "$HAERAM_DIFF_BASE" HEAD`로 영향받는 테스트만 고르는 명령으로 둘 수 있다. 기본 auto는 기존 linked worktree의 브랜치를 기획 공간으로 연결하고, 일반 checkout에서는 `work/<slug>` 브랜치와 별도 기획 worktree를 만든다. 경로·브랜치 접두사로 Orca를 추정하지 않는다.
+- `--push <branch>`(보통 cfg push)를 저장하면 통합된 단위마다 그 브랜치로 반영해 push한다 — 원격이 앞서 있으면 후보에서 먼저 합친다(STATE는 섹션 단위). 막힌 단위가 끝난 단위를 붙잡지 않고, 진행이 원격에 바로 보인다. `--review risky`(기본)는 위험한 단위만 리뷰로 보내고(`--review-path`·`--review-lines`로 조정, 기준은 start-vibe [조정자 절차](../start-vibe/references/coordinator.md)) `--review all`은 전부 리뷰한다. `--allow-tool`은 헤드리스 워커가 묻지 않고 실행할 명령 규칙이다 — 새 worktree에는 프로젝트 허용 목록이 적용되지 않는다.
+- explore 태스크와 그 후속은 묶음에 배정하지 않는다. 다른 단위가 끝나면 next가 `main-session`을 돌려주고, 메인 세션에서 단독으로 진행한다.
 - 기존 일반 checkout의 feature branch를 연결하려면 `--workspace current`, 항상 분리하려면 `--workspace new`. 분기 기준·이름·경로가 지정됐다면 `--base`, `--branch`, `--path`를 사용한다. 사용자에게 매번 모드를 묻지 않는다.
 - 미커밋 변경은 새 worktree에 복사되지 않는다. 관련 기획을 먼저 정리하고 사용자가 허용한 범위로 커밋한다. 관련 없는 변경은 자동 stash·commit하지 않는다.
 - 반환된 `path`에서 기획·채번을 진행한다. 한 묶음의 기획 공간에는 쓰기 담당을 하나만 둔다. 기획 커밋이 worker 배정의 기준이다.
@@ -46,7 +48,8 @@ description: >-
 - 세션 루프 밖에서는 조정자가 승인된 제출물에 `work integrate --attempt <id> --json`(저장된 단위 명령, `--verify`로 덮어쓰기 가능). 이 요청은 로컬 후보 생성·검증·상위 작업 브랜치 반영을 수행한다. 후보 worktree에는 의존성 설치나 환경 준비가 없으므로 필요하면 명시적인 검증 명령에 설치/준비도 포함한다. 외부 서비스·공유 DB가 필요한 검증은 프로젝트의 격리 규칙을 따른다.
 - CLI는 별도 후보에서 merge, 단위의 모든 태스크 아카이브, STATE 행 제거, spec 검사, 커밋, 지정 검증을 수행한다. 검증 시간 상한은 명령당 1시간이며 `--verify-timeout-ms`로 바꾼다. 상위 checkout이 clean이고 기준이 그대로일 때만 fast-forward한다. 충돌/실패 후보는 보존하며 실제 원인은 JSON details에서 확인한다.
 - 승인은 제출 커밋에 묶인다. 코드 변경은 재제출·재리뷰가 필요하고, 상위 커밋이 바뀌면 바뀐 파일이 그 단위의 변경·SSOT와 겹칠 때만 재리뷰한다. 승인됐다고 검증을 생략하지 않는다.
-- 통합 후 태스크가 done이고 후속 dep이 열린다. `work finish`의 검증 커밋은 `work board`의 `verified`로 확인한다(`current:false`면 이후 코드가 바뀌었으니 다시 finish). 작업 묶음 전체의 main 반영·PR·push는 프로젝트의 기존 흐름과 사용자가 허용한 범위에서 진행한다. `work integrate`는 원격 push나 main 자동 반영을 하지 않는다.
+- 통합 후 태스크가 done이고 후속 dep이 열린다. `work finish`의 검증 커밋은 `work board`의 `verified`로 확인한다(`current:false`면 이후 코드가 바뀌었으니 다시 finish). `--push`가 있으면 통합·sync마다 그 브랜치로 push되고 결과는 `group.pushed`에 남는다(거부되면 다음 통합·sync가 원격을 합쳐 다시 push한다). `--push`가 없으면 `work integrate`는 로컬 묶음 브랜치까지만 반영하고, main 반영·PR·push는 프로젝트의 기존 흐름을 따른다.
+- 같은 트리에서 통과한 검사는 다시 돌리지 않는다(검증 기록에 `cached`). 재제출은 고친 커밋부터의 변경만 `HAERAM_DIFF_BASE`로 넘긴다. 단위·묶음 검증은 clone 단위 heavy 락으로 하나씩 실행된다.
 
 ## 4. 정리·복구
 - 작업자가 종료된 뒤 `work cleanup --attempt <id>`. 통합/해제된 실행만 정리하며 상위 브랜치에 없는 커밋·미커밋 변경은 보존한다. 자체 생성 공간에 ignored 파일이 남아 있어도 보존한다. 외부 생성 공간은 폴더를 남기고 배정만 해제한다. 자체 생성 브랜치와 실패한 후보는 복구를 위해 남을 수 있다.
@@ -56,6 +59,7 @@ description: >-
 - 보고: novice에게는 완료·진행·막힌 일과 다음 행동을 설명한다. expert에게는 묶음 브랜치, attempt, 검증 커밋, 통합 결과, 보존한 경로를 간결하게 보고한다.
 
 ## 5. 계속 작업하는 워커와 대기 리뷰어
+- 사용자가 자리를 비우는 맡김 모드면 `work run --autopilot`으로 실행하고 조정자는 `work next --coordinator --autopilot` 루프로 결정 요청(`decide`)을 처리한다 — 워커는 기획 결정을 요청하고 다음 일로 넘어가며, 조정자가 잠정 update-ssot 후 `work update --status doing --note`로 재개하면 실행기가 같은 세션을 이어 실행한다. 절차는 start-vibe의 [조정자 절차](../start-vibe/references/coordinator.md).
 - 여러 태스크를 계속 처리하도록 요청받았으면 [실행기 연결](references/runner.md)을 읽는다. `work doctor`와 `work run --dry-run`으로 도구·역할·한도를 확인한다. `work run`은 기본 Codex/Claude 또는 command 어댑터를 사용해 워커 보충, lane 다음 태스크 이어 배정, 수정 우선 재배정, 리뷰, 직렬 통합, 묶음 완료 검증을 진행한다. 실제 실행 전 단계별 검증 명령(`--task-verify` 선택, `--verify` 단위 통합, `--group-verify` 묶음 완료)을 지정하고, 검사·미리보기만으로 에이전트를 실행했다고 보고하지 않는다.
 - Orca·수동 세션처럼 실행기 없이 여러 세션을 띄우면 각 세션이 세션 루프를 돈다. 오케스트레이터는 "implement-task로 남은 태스크 구현" 에이전트 N개를 유지하고, `wait`·timeout으로 끝난 에이전트만 다시 띄우며, `complete`·`stalled`면 멈춘다. 배정·리뷰·통합 판단은 CLI runtime이 하므로 오케스트레이터가 따로 결정하지 않는다.
 - 승인은 상위 브랜치가 바뀌어도 바뀐 파일이 그 단위의 변경·SSOT와 겹치지 않으면 유지된다. 합친 결과는 통합 검증이 다시 확인한다.

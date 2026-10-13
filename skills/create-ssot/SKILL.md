@@ -17,7 +17,7 @@ description: >-
 1. 먼저 spec/STATE.md를 읽는다. 없으면 중단하고 create-architecture 실행을 안내한다.
 2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
-4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
+4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
 작업 묶음의 워커에서 호출됐다면 이 스킬의 문서 쓰기 절차는 기획 공간으로 인계한다. `manage-work`가 반환한 group.path가 기획·채번·문서 정리 위치이며, 워커 checkout의 STATE·SSOT를 변경하지 않는다.
@@ -25,7 +25,7 @@ description: >-
 ## 1. 시작
 STATE 읽기 → log에 `- YYMMDD create-ssot <topic> start` → 기존 ssot/를 훑어 중복·연관 확인.
 같은 도메인이 이미 있으면 update-ssot로 전환을 제안한다.
-spec/ideation/에 st:ready 문서가 있으면 그것이 재료다 — domains의 해당 줄과 vision·shape·explored를 읽고, 2단계 인터뷰는 문서의 공백과 [?]만 채운다. 전환을 마친 domains 줄에 →<ID>를 달고, 모든 [o] 도메인이 전환되면 문서 st→converted@YYMMDD + STATE ideation 행 갱신.
+spec/ideation/에 st:ready 문서가 있으면 그것이 재료다(start-vibe가 기획 경로로 고른 open 문서도 — 이때 st를 ready로 바꾼다) — domains의 해당 줄과 vision·shape·explored를 읽고, 2단계 인터뷰는 문서의 공백과 [?]만 채운다. 전환을 마친 domains 줄에 →<ID>를 달고, 모든 [o] 도메인이 전환되면 문서 st→converted@YYMMDD + STATE ideation 행 갱신.
 
 ## 2. 기획 인터뷰
 아래를 전부 결정으로 만들 수 있을 때까지 묻는다. 한 번에 2~4개씩. 이미 문서·대화에 답이 있으면 묻지 않는다.
@@ -40,6 +40,7 @@ level별 질문법:
 - **expert**: 정책 엣지(동시성, 악용, 한도 초과 시 UX)까지 직접 묻는다. 선택지는 용어 나열로 짧게.
 - **mid**: 핵심 갈림길만 선택지 + 영향 1줄. 엣지는 추천안을 제시하고 확인.
 - **novice**: 기획 결정을 AI가 대신 정하지 않는다 — 기술과 달리 기획은 novice일수록 오히려 더 촘촘히 묻는다. 다만 용어 없이 "이런 상황이 생기면 어떻게 되면 좋겠어요?" 식 시나리오로 풀고, 질문마다 추천안을 붙여 고르기 쉽게 한다. 사용자가 "알아서 해줘"라고 넘긴 항목도 과금·데이터 삭제·개인정보만큼은 반드시 명시적으로 확인받는다.
+- **맡김 모드**: 위 질문을 똑같이 만들되 묻지 않고 추천안으로 결정을 쓴다. 질문마다 inbox `decided` 한 줄(`<question> → <choice> (alt: …)`)을 남겨 사용자가 나중에 같은 질문을 검토하게 한다. 과금·데이터 삭제·개인정보·보안은 정하지 않고 `[?]`로 두고 inbox `parked`.
 
 ## 3. 작성
 도메인 ID 확정(기존과 충돌 금지) → 이 스킬 폴더의 assets/ssot.md를 `spec/ssot/<ID>.md`로 복사해 채운다. (opt) 섹션(flow·constraints)은 안 쓰면 삭제, `<...>` 자리표시는 전부 실제 내용으로 교체.

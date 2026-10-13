@@ -14,7 +14,7 @@ description: >-
 1. 먼저 spec/STATE.md를 읽는다. 없으면 중단하고 create-architecture 실행을 안내한다.
 2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
-4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용.
+4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
 5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
 
 ## 1. 환경과 선택
@@ -33,9 +33,9 @@ description: >-
 - 응답의 `action`대로 하고 `instruction`을 따른다:
   - `implement`: `attempt.workspace`에서 `attempt.tasks`를 `attempt.taskId`부터 순서대로 이 스킬의 2~5단계(작업 묶음 워커 규칙)로 구현하고 태스크마다 커밋한다. lane의 마지막 태스크까지 끝낸 뒤 `work submit --attempt <id> --json`을 한 번 실행한다 — 저장된 태스크 단계 명령이 lane 변경 전체에 실행되고 `ready`가 된다. 응답이 `doing`이면 완료 기록이 빠진 태스크부터 이어 가고, `ready`면 루프로 돌아간다. `correction`이 있으면 그 findings부터 처리한다(통합 실패면 묶음 브랜치를 merge해 해결).
   - `review`: review-task로 `review.workspace`를 읽기 전용 검토하고 `work review-finish`를 실행한다.
-  - `blocked`: 직접 고칠 수 있으면 고치고 `work update --attempt <id> --status doing` 후 다시 submit, 기획 판단이 필요하면 보고하고 멈춘다.
+  - `blocked`: 직접 고칠 수 있으면 고치고 `work update --attempt <id> --status doing` 후 다시 submit. 기획 판단이 필요하면 함께 모드는 보고하고 멈추고, 맡김 모드는 결정 요청(질문·선택지·추천)을 `work update --attempt <id> --status blocked --reason <요약> --decision-file <repo 밖 JSON>`으로 남기고 루프를 계속한다 — 조정자가 결정한 뒤 재개된다.
   - `wait`: 그대로 다시 호출한다. `reason:needs-reviewer`면 독립 리뷰어가 없는 것이다 — 서브에이전트 도구가 있으면 새 컨텍스트의 서브에이전트에 review-task를 맡기고(owner `<owner>-review`로 `work review-claim`부터), 없으면 다른 세션을 열어 같은 요청을 하라고 안내한다.
-  - `complete`: 묶음 브랜치와 검증 커밋을 보고하고 main 반영 여부를 묻는다. `stalled`: 막힌 원인을 보고하고 멈춘다.
+  - `complete`: 묶음 브랜치·검증 커밋과 push 브랜치 반영 여부를 보고한다(묶음에 `--push`가 있으면 통합마다 이미 올라가 있다). push가 없는 묶음의 main 반영은 함께 모드면 묻고, 맡김 모드면 inbox `parked`. `stalled`: 막힌 원인을 보고하고 멈춘다(맡김이면 inbox `parked` 후 다른 일). `main-session`: 남은 일이 explore 태스크와 그 후속뿐이다 — 묶음을 마치고 메인 세션에서 단독으로 진행한다.
 - 루프에서는 `work integrate`·`work finish`를 직접 실행하지 않고, 다른 세션의 작업 공간에 쓰지 않는다.
 
 ## 2. 신선도
@@ -47,10 +47,13 @@ description: >-
 - 작업 묶음에서는 구현 시작·수정 재개·제출 전에 `work board --work <group> --json`으로 최신 배정과 기획 기준을 확인한다. 긴 작업 중에는 주기적으로 heartbeat와 관련 변경을 확인한다. runner는 생존 heartbeat를 갱신하지만 정책 변경을 대신 판단하지 않는다. 리뷰 공간에서 implement-task를 실행하지 않는다.
 - 정독: 태스크 전체 + ssot가 가리키는 결정 원문 + ARCH 컨벤션. impl notes가 `review/<slug> Fn`을 가리키면 그 finding 원문도 읽는다. 현재 규칙의 출처는 ssot/뿐이다 — 완료 태스크는 당시 기록이라 근거로 쓰지 않고, 회귀 원인·이전 검증 방법을 확인해야 할 때만 `tasks/done/`에서 해당 파일을 골라 연다.
 - 완료기준을 위에서부터 구현. 범위 밖 발견(버그·개선거리)은 단독이면 log에 1줄, 작업 묶음이면 자신의 result limits 또는 blocked reason으로 인계한다(쌓이면 기획 공간에 `review-code` 제안).
-- 태스크는 질문 없이 완주 가능해야 정상이다. 구현 중 결정이 필요한 질문이 생기면 분해 실패 신호 — 임의로 정하지 말고, 기획 공백·모순이면 update-ssot 제안, 기술 결정 누락이면 blocked 후 create-task 재분해 제안.
+- 태스크는 질문 없이 완주 가능해야 정상이다. 구현 중 결정이 필요한 질문이 생기면 분해 실패 신호 — 임의로 정하지 말고, 기획 공백·모순이면 update-ssot 제안, 기술 결정 누락이면 blocked 후 create-task 재분해 제안. 단독 흐름이 start-vibe 맡김 모드라면 제안 대신 그 스킬을 추천안으로 바로 실행하고(잠정, inbox `decided`) 이어서 구현한다 — 기다리지 않는다.
+- 실행기 브리핑(`work brief`·dispatch의 `brief`)이 있으면 그것이 정독 범위다 — 태스크·결정 원문·검증 명령이 들어 있으니 STATE·FORMAT·ARCH 전체를 다시 읽지 않고, 브리핑으로 부족할 때만 원문을 연다.
+- **explore 태스크**(인용줄 `explore:<시간>`): 시작할 때 시각과 시간 제한을 log에 적는다. 실험·측정처럼 무거운 명령은 `npx haeram-spec-creator vibe check --heavy -- <cmd>`로 실행한다(동시에 다른 무거운 검증과 겹치지 않음). 측정값은 나올 때마다 result limits에 갱신해 중단돼도 남게 한다. 시간이 다 되면 exit 줄대로 측정값을 남기고 마감한다 — 함께 모드는 그 전에 한 번 묻고, 맡김 모드는 exit대로 하고 inbox `decided`. 기준을 맞추려고 SSOT 규칙을 코드에서 바꾸지 않는다.
 
 ## 4. 검증 (항상 이 순서로 마친다)
 ① acceptance를 하나씩 실제로 확인하고 `[v]`로 채운다 ② test — 태스크 단계 ③ lint ④ formatter ⑤ ARCH에 CI/CD가 정의돼 있으면 그 파이프라인이 검사하는 항목을 로컬에서 재현하고, 원격에 푸시된 상태면 CI/CD 결과까지 확인한다 ⑥ `npx -y haeram-spec-creator lint`로 spec 정합성을 검사하고 오류·경고는 고친다(네트워크·CLI가 없으면 생략) — 출력의 `검토 후보`는 구조 위반이 아니라 문서 품질 신호라 여기서 고치지 않고, 쌓이면 단독 작업의 next에 `doc-review <ID>`를 남기고, 묶음 워커는 result limits로 기획 공간에 인계한다. ②~⑤의 명령은 ARCH의 verify 결정에서 가져온다.
+- 같은 작업 트리에서 이미 통과한 검사는 다시 돌리지 않는다. 검증 명령은 `npx haeram-spec-creator vibe check -- <cmd>`로 실행하면 트리 단위로 기록되고, 바뀌지 않은 트리에서는 결과를 재사용한다.
 - **태스크 단계 test**: 이 태스크가 추가·수정한 테스트와 변경이 영향을 줄 수 있는 기존 테스트(역의존 import, 공유 계약·설정·마이그레이션·테스트 설정의 소비자)만 실행한다. 영향 범위를 한정할 수 없으면 그 스위트 전체로 넓힌다. 선택한 명령과 영향 판단 근거를 result verified에 남기고, 빈 선택을 동작 검증으로 세지 않는다.
 - **전체 스위트와 ⑤ CI 재현**: 작업 묶음에서는 단위 통합(`work integrate --verify`)과 묶음 완료(`work finish --verify`)가 실행하므로 워커는 돌리지 않는다. 단독 흐름은 ARCH에 단계 구분(태스크/push 전 등)이 있으면 그 단계에 맡기고, 없으면 ARCH verify 전체를 실행한다. 마지막으로 done 직전 신선도 재확인(2단계와 동일, 현재 checkout 기준이며 다른 브랜치의 SSOT 변경은 자동으로 보이지 않음) — 구현 중 rev가 올랐으면 델타 영향을 재평가한다. 어느 하나라도 실패한 채 done 금지 — 해결하거나 blocked(사유 1줄은 ## result에).
 
@@ -63,4 +66,4 @@ description: >-
 - 구현 중 정해진 것 중 **이후 변경이 계속 지켜야 하는 계약**은 result에 적어 끝내지 않는다 — 완료 태스크는 아카이브라 아무도 현재 규칙으로 읽지 않는다. update-ssot를 제안해 SSOT로 올린다.
 - 태스크 파일: st→`done@YYMMDD` 갱신 후 `spec/tasks/done/`으로 이동(아카이브).
 - STATE: 해당 행 삭제 — tasks 표는 남은 일만 남긴다. next 갱신(다음 todo), log `- YYMMDD T### done` 1줄.
-- 보고는 cfg.level대로 — novice: 무엇이 가능해졌고 어떻게 확인하는지 / expert: 변경 요약과 리뷰 포인트. 단독 흐름의 커밋은 요청받았을 때만.
+- 보고는 cfg.level대로 — novice: 무엇이 가능해졌고 어떻게 확인하는지 / expert: 변경 요약과 리뷰 포인트. 단독 흐름의 커밋은 요청받았거나 start-vibe 세션일 때만(push는 start-vibe가 한다).

@@ -4,7 +4,7 @@
 
 ## 일반 터미널: work run
 
-사용자가 여러 태스크의 지속 실행을 요청했을 때 사용한다. Codex·Claude CLI용 기본 어댑터가 포함돼 있다. `work doctor`로 설치·필수 옵션 지원과 Orca runtime 접근 여부를 확인한다. CLI 로그인·요금·모델 접근 권한은 검사하지 않으며, doctor와 dry-run은 모델을 호출하지 않는다. 실행기는 리뷰·검증 통과 후 작업 묶음 브랜치까지 자동 통합한다. main 반영·push는 수행하지 않는다.
+사용자가 여러 태스크의 지속 실행을 요청했을 때 사용한다. Codex·Claude CLI용 기본 어댑터가 포함돼 있다. `work doctor`로 설치·필수 옵션 지원과 Orca runtime 접근 여부를 확인한다. CLI 로그인·요금·모델 접근 권한은 검사하지 않으며, doctor와 dry-run은 모델을 호출하지 않는다. 실행기는 리뷰·검증 통과 후 작업 묶음 브랜치까지 자동 통합한다. 묶음에 `--push <branch>`가 저장돼 있으면 통합마다 그 브랜치로 push한다(원격이 앞서 있으면 후보에서 먼저 합친다). 없으면 main 반영·push는 하지 않는다.
 
 ```bash
 npx haeram-spec-creator work start feature --workers 4 --reviewers 1 --max-pending 8 --json
@@ -20,10 +20,11 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 - `--verify`(필수): 단위(lane 또는 lane 없는 태스크)를 통합할 때마다 merge 후보에서 한 번 실행한다. 보통 전체 test.
 - `--group-verify`(선택): 모든 단위가 통합되면 묶음 브랜치에서 한 번 실행하고 검증 커밋을 기록한다(`work board`의 `verified`). 생략하면 나중에 `work finish`로 실행한다.
 - 각 옵션은 반복할 수 있고 명령당 상한은 1시간이다(`--verify-timeout-ms`). 명령은 ARCH의 단계별 verify 결정에서 가져온다. 생략하면 `work start`/`work configure`로 묶음에 저장한 명령을 쓴다.
-- 명령에는 `HAERAM_TIER`(task|unit|group), `HAERAM_DIFF_BASE`(태스크=이전 단계 커밋, 단위=통합 전 상위 커밋, 묶음=묶음 시작 커밋), `HAERAM_TASK`·`HAERAM_TASKS`가 전달된다. 예: `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 호스트가 영향받는 테스트를 직접 실행한다. 빈 선택이 통과로 끝나지 않게 명령을 구성한다.
+- 같은 트리에서 이미 통과한 명령은 다시 돌리지 않는다(`HAERAM_*`를 읽는 명령은 그 값까지 같아야 한다). 기록에는 `cached`로 남는다. 단위·묶음 검증은 clone 단위 heavy 락을 잡고 하나씩 실행된다 — `vibe check --heavy`로 돌리는 실험과도 겹치지 않는다.
+- 명령에는 `HAERAM_TIER`(task|unit|group), `HAERAM_DIFF_BASE`(태스크=이전 단계 커밋, 재제출=고친 대상 커밋, 단위=통합 전 상위 커밋, 묶음=묶음 시작 커밋), `HAERAM_TASK`·`HAERAM_TASKS`가 전달된다. 예: `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 호스트가 영향받는 테스트를 직접 실행한다. 빈 선택이 통과로 끝나지 않게 명령을 구성한다.
 
 ### lane
-lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 새 에이전트를 실행하고(컨텍스트를 태스크마다 새로 시작), 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 세션 루프의 세션은 lane 전체를 구현한 뒤 한 번 제출한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
+lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 에이전트를 실행하고, 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 다음 태스크·수정 요청·답을 받은 결정 요청은 같은 세션을 이어서(resume) 실행한다 — 연속 4회까지, 그 뒤에는 새 세션. 세션 ID는 실행이 끝나기 전에 기록되므로(Claude는 `--session-id`로 미리 정하고, Codex는 첫 이벤트의 thread ID) timeout으로 끊긴 실행도 이어 갈 수 있다. 워커에게는 태스크 파일·인용한 결정 블록·검증 명령을 묶은 `brief`를 넘긴다(`work brief --attempt <id>`와 같은 내용) — STATE·FORMAT·ARCH 전체를 다시 읽지 않게 한다. 세션 루프의 세션은 lane 전체를 구현한 뒤 한 번 제출한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
 
 `--provider auto`가 기본이며 호환되는 Codex, Claude 순으로 선택한다. Orca 설치 여부로 실행 방식을 바꾸지 않는다. reviewer-provider를 생략하면 worker와 같은 도구를 사용한다. `--model`·`--reviewer-model`을 생략하면 각 CLI의 설정을 사용한다. 같은 도구의 리뷰어는 명시한 worker 모델을 상속하고, 다른 도구의 리뷰어는 모델을 따로 지정하지 않으면 그 CLI 기본값을 사용한다. 임의로 모델을 추정하거나 설치·로그인하지 않는다.
 
@@ -52,7 +53,7 @@ providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`
 
 모델을 생략하면 해당 CLI 설정을 사용한다. 혼합 실행에서는 리뷰어 모델을 워커에서 상속하지 않고, reviewerProvider를 생략하면 목록의 첫 도구를 사용한다. `--provider`와 `--providers`는 함께 지정하지 않는다. 혼합 실행의 `--model`은 거부하며 adapter의 각 workers 항목에 지정한다. `--adapter`와 provider/model CLI 옵션도 함께 지정하지 않는다.
 
-기본 어댑터는 배포된 implement-task/review-task 본문과 배정 정보를 매 실행에 전달한다. Codex는 worker에 workspace-write, reviewer에 read-only sandbox를 지정하고 JSON schema와 최종 결과 파일을 사용한다. Claude는 worker에 acceptEdits, reviewer에 plan 권한 모드와 역할별 도구 목록을 지정하고 structured_output을 읽는다. 기존 인증·권한 정책을 사용하며 권한을 건너뛰는 옵션은 사용하지 않는다. Claude의 shell 검사 등 허용되지 않은 명령은 사전에 프로젝트 정책에 맞게 설정하거나 blocked로 인계한다. 호스트의 `--verify` 명령은 별도로 실행된다. CLI 출력 형식이 맞지 않거나 종료 코드가 실패면 완료로 취급하지 않는다. 규약 근거: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive/), [Claude headless 실행](https://code.claude.com/docs/en/headless).
+기본 어댑터는 새 세션에 배포된 implement-task/review-task 본문과 배정 정보를 전달하고, 이어 쓰는 세션에는 새 정보(다음 태스크, correction, 조정자 메모)만 보낸다. Codex는 worker에 workspace-write, reviewer에 read-only sandbox를 지정하고 JSON schema와 최종 결과 파일을 사용한다. Claude는 worker에 acceptEdits, reviewer에 plan 권한 모드와 역할별 도구 목록을 지정하고 structured_output을 읽는다. 기존 인증·권한 정책을 사용하며 권한을 건너뛰는 옵션은 사용하지 않는다. 워커가 도는 새 worktree는 한 번도 신뢰한 적 없는 폴더라서 `claude -p`는 프로젝트 `.claude/settings.json`의 `permissions.allow`를 적용하지 않는다. 워커가 실행해야 할 명령은 `work start/configure --allow-tool 'Bash(pnpm run *)'`로 묶음에 저장하면 워커의 `--allowedTools`에 더해진다. `vibe preflight --probe '<명령>' --allow-tool ...`이 같은 조건의 새 worktree에서 실제 헤드리스 워커로 그 명령을 실행해 보고 권한 거부를 미리 알려 준다. 호스트의 `--verify` 명령은 별도로 실행된다. CLI 출력 형식이 맞지 않거나 종료 코드가 실패면 완료로 취급하지 않는다. 규약 근거: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive/), [Claude headless 실행](https://code.claude.com/docs/en/headless).
 
 기본 어댑터의 워커는 코드와 자신의 태스크만 편집하고 커밋하지 않는다. 호스트가 시작 시 깨끗한 작업 공간과 HEAD를 기록하고, 종료 시 acceptance·계약·SSOT·spec 변경 범위를 검사한 뒤 커밋한다(`committing`). 이어 검증·제출한다. 예상 밖 HEAD 변경이나 계약 위반은 blocked로 남기며 변경을 되돌리지 않는다. sandbox의 공용 Git 디렉토리 쓰기 권한을 넓히지 않아도 된다.
 
@@ -79,6 +80,7 @@ stdin은 JSON 객체 한 줄이다:
 - `instruction`: 실행 역할과 완료 절차. command 어댑터의 worker는 commit까지, reviewer는 결과 JSON 반환까지 수행한다. 기본 어댑터에서는 worker 커밋도 호스트가 담당한다. submit/review-finish는 runner 소유이므로 중복 호출하지 않는다.
 - `verify`: 단위 통합 검증 명령 배열, `taskVerify`: 태스크 제출 때 호스트가 실행할 명령 배열(빈 배열 가능). `cliCommand`: 현재 패키지 CLI의 실행 파일과 절대 경로 인자 배열. 여기에 `boardCommand`를 이어 붙여 최신 상태를 조회한다.
 - `correction`: 수정 요청을 재배정할 때 이전 리뷰와 findings; 없으면 null.
+- `mode`: `autopilot`이면 아무도 질문에 답하지 않는다. `resume`: 이어 쓸 세션 ID(없으면 null), `sessionFile`: 새 세션 ID를 알게 되는 즉시 써 둘 파일. `directive`: 조정자 메모나 timeout 후 이어 가기 안내(`note`). `allowTools`: 워커가 묻지 않고 실행할 도구 규칙. `brief`: 태스크·결정 원문·검증 명령. `risk`: 리뷰어에게 넘기는 위험 이유.
 - `review`: 리뷰 배정 시 id, submissionId, commit, baseCommit, workspace, owner. 없으면 null.
 
 stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 보낸다. 실행 도구의 JSONL/마크다운 출력은 어댑터에서 아래 형식으로 변환한다. raw CLI 출력을 그대로 연결해 이 규약을 만족한다고 가정하지 않는다.
@@ -87,13 +89,21 @@ stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 �
 {"outcome":"completed","summary":"Implemented and committed the task."}
 ```
 
-워커가 막히면 `{"outcome":"blocked","summary":"Reason and required decision."}`. completed여도 runner가 실제 커밋·acceptance·spec 변경 범위와 검증 명령을 다시 검사한다.
+워커가 막히면 `{"outcome":"blocked","summary":"Reason and required decision."}`. 기획 결정만이 문제라면 `"decision":{"question":"...","options":["..."],"recommendation":"..."}`를 더한다 — 실행기는 진행분을 WIP 커밋으로 남기고 결정 요청으로 기록한 뒤 다른 단위를 계속한다(단위당 3회까지). 기본 어댑터의 결과 schema에는 decision이 항상 있고, 결정이 필요 없으면 빈 값이다. completed여도 runner가 실제 커밋·acceptance·spec 변경 범위와 검증 명령을 다시 검사한다.
 
 리뷰어는 review-task의 JSON 형식(`verdict`, `summary`, `findings`)을 반환한다. 코드가 바뀌면 재제출이 필요하다. 상위 브랜치가 바뀌어도 바뀐 파일이 제출물의 변경·SSOT와 겹치지 않으면 승인이 유지되고, 겹치면 재리뷰한다. 합친 결과는 통합 검증이 다시 확인한다.
 
 runner는 빈 슬롯을 채우고 수정 요청을 우선 배정하며 리뷰 대기열을 처리한다. 대기 중 모델 호출은 하지 않는다. 살아 있는 자식 프로세스의 heartbeat는 10초마다 기록하지만 에이전트의 의미 있는 진행을 보장하지는 않는다. 장시간 작업자는 board를 다시 읽고 정책 변경을 판단해야 한다.
 
 완료 시 `outcome:completed`(`--group-verify`를 지정했다면 그 검증까지 통과해야 한다, 결과는 `finish`). 더 진행할 수 없으면 `needs-attention`과 남은 작업을 반환한다. 횟수 한도는 `dispatch-limit`, 종료 신호/heartbeat 실패는 `interrupted`. maxTaskRuns는 한 번의 run 안에서 태스크별·역할별 최대 실행 횟수이며 재실행 전에 반복 실패 원인을 확인한다. 자동 통합 실패는 같은 run에서 무한 재시도하지 않는다.
+
+### 맡김(autopilot)
+
+`work run --autopilot`은 사람이 없다는 전제로 돈다.
+- 결정 요청만 남아도 끝나지 않고 조정자의 답을 기다린다(모델 호출 없음, 기본 2시간 `--decision-wait-ms`, 지나면 `decision-wait`로 끝남). 조정자 세션은 `work next --coordinator --autopilot` 루프에서 `decide`를 받아 잠정 update-ssot(그 태스크의 base 갱신 포함)를 커밋하고 `work update --attempt <id> --status doing --note '<결정과 rev>'`로 재개한다. 실행기는 기획 브랜치를 그 워커 공간에 합치고 같은 세션을 이어 실행한다. 조정자는 단위·리뷰를 맡지 않는다.
+- timeout이면 끊기 전에 작업 공간을 `refs/haeram/checkpoints/<attempt>`로 스냅샷하고(30분마다도, `--checkpoint-ms`) 진행분을 `WIP` 커밋으로 남긴 뒤, 같은 세션으로 한 번 더 이어 간다(태스크 실행 횟수 한도 안에서). `--push`가 있는 묶음은 스냅샷을 `wip/<attempt 8자>`로도 push한다.
+- 계획 커밋이나 다른 통합이 검증 도중 상위 브랜치를 옮긴 통합은 같은 실행 안에서 몇 번 다시 시도한다.
+- macOS에서는 실행기 수명 동안 `caffeinate -w`로 절전을 막는다(`HAERAM_NO_AWAKE=1`이면 끔).
 
 ### 진행 저장
 
