@@ -36,7 +36,8 @@ async function resolveGroup(context, options) {
   try {
     // Sessions review each other's units, so review capacity follows the session count.
     await startWork({ targetRoot: options.targetRoot, name, workspace: 'new', workers: options.workers, reviewers: options.reviewers ?? options.workers ?? 4, maxPending: options.maxPending,
-      taskVerify: options.taskVerify, verify: options.verify, groupVerify: options.groupVerify })
+      taskVerify: options.taskVerify, verify: options.verify, groupVerify: options.groupVerify,
+      push: options.push, remote: options.remote, review: options.review, reviewPath: options.reviewPath, reviewLines: options.reviewLines, allowTool: options.allowTool })
   } catch (error) {
     if (!Object.hasOwn((await readRuntime(context.root)).groups, name)) throw error
   }
@@ -111,6 +112,9 @@ async function outlook(context, id, owner) {
   const deferred = mainSessionTasks(board.tasks)
   const open = board.tasks.filter((task) => task.st === 'todo' && !owned.has(task.id) && !deferred.has(task.id))
   const moving = live.filter((entry) => entry.status !== 'blocked')
+  // A filed decision is the coordinator's to answer: the group is waiting on it, not stalled.
+  const deciding = live.filter((entry) => entry.status === 'blocked' && entry.decision && !entry.decision.answeredAt)
+  if (!moving.length && deciding.length && group.coordinator) return { state: 'waiting', reason: 'decision', deciding: deciding.map((entry) => ({ attempt: entry.id, tasks: unitTasks(entry), question: entry.decision.question })) }
   const blocked = live.filter((entry) => entry.status === 'blocked').map((entry) => ({ attempt: entry.id, tasks: unitTasks(entry), owner: entry.owner, reason: entry.reason ?? null }))
   if (!open.length && !live.length) {
     const verified = await groupVerification(context, group)
@@ -133,6 +137,15 @@ async function outlook(context, id, owner) {
   return { state: 'waiting', reason: group.operation || group.gate ? 'integration-in-progress' : null, inFlight }
 }
 
+// Autopilot: nobody answers, so no instruction ends in a question to the user.
+const UNATTENDED = {
+  blocked: 'attempt.reason을 확인한다. 직접 고칠 수 있으면 고친 뒤 work update --attempt <id> --status doing으로 재개해 다시 submit한다. 기획 결정이 필요하면 결정 요청(question·options·recommendation)을 저장소 밖 JSON에 써서 work update --attempt <id> --status blocked --reason <요약> --decision-file <path>로 남기고 work next를 다시 호출한다 — 기다리지 않는다.',
+  decide: 'attempt.decision에 답한다(조정자). 기획 공간에서 recommendation으로 update-ssot를 진행하고(잠정) inbox decided·보고서에 질문·선택·대안을 남겨 커밋한 뒤, work update --attempt <id> --status doing --note <적용한 결정과 SSOT rev>로 재개한다. 과금·데이터 삭제·개인정보·보안이면 정하지 않고 inbox parked 후 work release --attempt <id> --reason parked. 그리고 work next를 다시 호출한다.',
+  complete: '남은 일이 없다. push 브랜치 반영 결과와 검증 커밋을 보고서에 남기고 마감한다. push가 없는 묶음의 main 반영은 inbox parked로 남긴다.',
+  stalled: '사람만 풀 수 있는 원인이다. 원인을 inbox parked와 보고서에 남기고 묶음 밖의 다른 일로 간다 — 기다리지 않는다.',
+  'needs-reviewer': '이 세션의 제출물만 남아 있어 독립 리뷰어가 필요하다. 새 컨텍스트의 서브에이전트에서 다른 owner로 review-task를 실행한 뒤 work next를 다시 호출한다. 서브에이전트가 없으면 inbox parked로 남기고 다른 일로 간다.',
+}
+
 const INSTRUCTION = {
   implement: 'attempt.workspace에서 attempt.tasks를 attempt.taskId부터 순서대로 implement-task로 구현하고 태스크마다 커밋한 뒤, 마지막 태스크까지 끝나면 work submit --attempt <id>를 한 번 실행한다. 응답이 doing이면 그 taskId부터 이어 가고, ready면 work next를 다시 호출한다. correction이 있으면 findings부터 처리한다.',
   review: 'review.workspace(읽기 전용)에서 review-task로 review.tasks를 검토하고, 저장소 밖 JSON 파일에 결과를 써서 work review-finish --review <id> --result-file <path>를 실행한 뒤 work next를 다시 호출한다.',
@@ -141,15 +154,27 @@ const INSTRUCTION = {
   'needs-reviewer': '이 세션의 제출물만 남아 있어 독립 리뷰어가 필요하다. 다른 세션을 열어 같은 요청을 하게 하거나, 새 컨텍스트의 서브에이전트에서 다른 owner로 review-task를 실행한 뒤 work next를 다시 호출한다.',
   complete: '남은 일이 없다. 묶음 브랜치와 검증 커밋을 보고하고 main 반영 여부를 사용자에게 묻는다.',
   stalled: 'blocked·finishFailure 원인을 사용자에게 보고하고 멈춘다. 해결되면 work next를 다시 호출한다.',
+  decide: 'attempt.decision(question·options·recommendation)을 사용자에게 선택지형으로 묻고, 기획 공간에서 update-ssot로 반영해 커밋한 뒤 work update --attempt <id> --status doing --note <적용한 결정과 SSOT rev>로 재개한다.',
   'main-session': '묶음에서 할 일은 끝났다. 남은 tasks는 explore 태스크와 그 후속이라 메인 세션에서 단독으로(implement-task) 진행한다.',
 }
 
 async function nextAction(context, options) {
   const state = await readRuntime(context.root)
+  const group = groupOf(state, options.work)
+  // The coordinator answers filed decisions before anything else: each one unblocks a worker.
+  if (options.owner === group.coordinator) {
+    const filed = Object.values(state.attempts).filter((entry) => entry.group === options.work && entry.status === 'blocked' && entry.decision && !entry.decision.answeredAt)
+      .sort((a, b) => a.decision.at.localeCompare(b.decision.at))[0]
+    if (filed) return { action: 'decide', attempt: filed }
+    // The coordinator decides, parks and reports; it never takes a unit or a review.
+    const view = await outlook(context, options.work, options.owner)
+    return view.state === 'waiting' ? { action: 'wait', ...view } : { action: view.state, ...view, final: true }
+  }
   const mine = Object.values(state.attempts).filter((entry) => entry.group === options.work && entry.owner === options.owner)
   const doing = mine.find((entry) => entry.status === 'doing')
   if (doing) return { action: 'implement', attempt: doing }
-  const blocked = mine.find((entry) => entry.status === 'blocked')
+  // A unit whose decision is with the coordinator is not this session's to unblock.
+  const blocked = mine.find((entry) => entry.status === 'blocked' && !(entry.decision && !entry.decision.answeredAt && group.coordinator))
   if (blocked) return { action: 'blocked', attempt: blocked }
   const corrected = await resumeWork({ ...options, attempt: undefined })
   if (!corrected.idle) return { action: 'implement', attempt: corrected }
@@ -172,14 +197,22 @@ export async function nextWork(options) {
   const context = await repository(options)
   const work = await resolveGroup(context, options)
   const scoped = { ...options, work }
+  if (options.coordinator) {
+    await transaction(context.root, (state) => {
+      const group = groupOf(state, work)
+      if (group.coordinator && group.coordinator !== options.owner) fail(`이 묶음의 조정자는 ${group.coordinator}입니다.`)
+      group.coordinator = options.owner
+    })
+  }
   for (;;) {
     await kickGate(context, scoped, work)
     const result = await nextAction(context, scoped)
     const timedOut = result.action === 'wait' && !result.final && Date.now() >= deadline
     if (result.action !== 'wait' || result.final || timedOut) {
       const { final, state, ...rest } = result
+      const key = result.reason === 'needs-reviewer' ? 'needs-reviewer' : result.action
       return { schemaVersion: 1, work, owner: options.owner, ...rest, ...(timedOut && seconds ? { reason: 'timeout', detail: result.reason } : {}),
-        instruction: INSTRUCTION[result.reason === 'needs-reviewer' ? 'needs-reviewer' : result.action] }
+        instruction: (options.autopilot ? UNATTENDED[key] : null) ?? INSTRUCTION[key] }
     }
     await sleep(Math.min(options.pollMs ?? 5000, deadline - Date.now()))
   }

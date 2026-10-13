@@ -519,7 +519,20 @@ async function claimTask(options, next = false) {
   }
 }
 
+// A worker that needs a planning decision files it (--decision-file) and moves on; the
+// coordinator answers by resuming the attempt with a note (--status doing --note).
+async function readDecision(file) {
+  let decision
+  try { decision = JSON.parse(await readFile(file, 'utf8')) } catch (error) { fail('결정 요청 JSON을 읽지 못했습니다.', [error.message]) }
+  if (!decision || typeof decision.question !== 'string' || !decision.question.trim() || !Array.isArray(decision.options) ||
+      decision.options.some((value) => typeof value !== 'string') || typeof decision.recommendation !== 'string') {
+    fail('결정 요청에는 question, options(문자열 배열), recommendation이 필요합니다.')
+  }
+  return { question: decision.question, options: decision.options, recommendation: decision.recommendation }
+}
+
 export async function updateWork(options) {
+  const decision = options.decisionFile ? await readDecision(options.decisionFile) : null
   const context = await repository(options)
   return transaction(context.root, (state) => {
     const attempt = attemptOf(state, options.attempt)
@@ -527,12 +540,19 @@ export async function updateWork(options) {
     if (!['doing', 'blocked', 'ready', 'approved', 'changes_requested'].includes(attempt.status)) fail(`이 실행은 갱신할 수 없습니다: ${attempt.status}`)
     if (options.status && !['doing', 'blocked'].includes(options.status)) fail('상태는 doing 또는 blocked만 지정할 수 있습니다. ready는 submit으로 검증합니다.')
     if (options.status === 'blocked' && !options.reason?.trim()) fail('blocked에는 --reason이 필요합니다.')
+    if (decision && options.status !== 'blocked') fail('결정 요청은 --status blocked와 함께 남깁니다.')
+    if (options.note !== undefined && options.status !== 'doing') fail('--note는 --status doing으로 재개할 때 전달합니다.')
     if (options.status) {
       if (options.status === 'doing' && !workerBusy(attempt) && Object.values(state.attempts).filter((entry) => entry.group === attempt.group && workerBusy(entry)).length >= workLimits(groupOf(state, attempt.group).limits).workers) fail('worker-capacity')
       invalidateReview(attempt, 'worker resumed or blocked')
       attempt.status = options.status
       attempt.reason = options.reason ?? null
       delete attempt.verifiedCommit
+    }
+    if (decision) attempt.decision = { ...decision, at: now() }
+    if (options.note !== undefined) {
+      attempt.directive = { note: options.note, at: now() }
+      if (attempt.decision && !attempt.decision.answeredAt) Object.assign(attempt.decision, { answeredAt: now(), answer: options.note })
     }
     attempt.heartbeatAt = now()
     return attempt

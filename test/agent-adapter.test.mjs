@@ -92,3 +92,37 @@ test('단일/혼합 워커와 모델별 설정을 지원하고 모호한 설정�
     await assert.rejects(builtInAdapter({ ...options, ...invalid }))
   }
 })
+
+test('워커는 결정 요청을 돌려줄 수 있고, 세션 ID를 미리 정해 파일에 남긴 뒤 다음 실행에서 이어 쓴다', async (t) => {
+  const fixture = await stub(t, 'claude', `const fs=require('node:fs');let text='';process.stdin.on('data',chunk=>text+=chunk);process.stdin.on('end',()=>{fs.appendFileSync('calls.jsonl',JSON.stringify({args:process.argv.slice(2),text})+'\\n');console.log(JSON.stringify({type:'result',is_error:false,session_id:'ignored',structured_output:{outcome:'blocked',summary:'needs a policy',decision:{question:'Cap per user?',options:['10','unlimited'],recommendation:'10'}}}));});`)
+  const sessionFile = path.join(fixture.root, 'session.txt')
+  const first = await executeAgentAdapter({ provider: 'claude', job: { ...job(fixture.root), mode: 'autopilot', sessionFile, allowTools: ['Bash(npm test *)'], brief: { tasks: [] } }, env: fixture.env, log: () => {} })
+  assert.deepEqual(first.decision, { question: 'Cap per user?', options: ['10', 'unlimited'], recommendation: '10' })
+  const session = await readFile(sessionFile, 'utf8')
+  assert.equal(first.session, session)
+  const [call] = (await readFile(path.join(fixture.root, 'calls.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
+  assert.equal(flag(call.args, '--session-id'), session)
+  assert.equal(flag(call.args, '--allowedTools'), 'Read,Edit,Write,Glob,Grep,Bash(npm test *)')
+  assert.match(call.text, /Nobody is available to answer questions/)
+  assert.match(call.text, /reading scope/)
+  assert.match(call.text, /# implement-task/)
+  await executeAgentAdapter({ provider: 'claude', job: { ...job(fixture.root), resume: session, directive: { note: 'ITEM-4 r2: cap is 10' } }, env: fixture.env, log: () => {} })
+  const resumed = (await readFile(path.join(fixture.root, 'calls.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line))[1]
+  assert.equal(flag(resumed.args, '--resume'), session)
+  assert.ok(!resumed.args.includes('--session-id'))
+  assert.match(resumed.text, /Coordinator note: ITEM-4 r2: cap is 10/)
+  assert.doesNotMatch(resumed.text, /# implement-task/)
+})
+
+test('Codex 세션은 첫 이벤트의 thread_id로 기록하고 exec resume으로 이어 간다', async (t) => {
+  const fixture = await stub(t, 'codex', `const fs=require('node:fs');const args=process.argv.slice(2);let text='';process.stdin.on('data',chunk=>text+=chunk);process.stdin.on('end',()=>{fs.writeFileSync('args.json',JSON.stringify(args));console.log(JSON.stringify({type:'thread.started',thread_id:'thread-123'}));fs.writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({outcome:'completed',summary:'done',decision:{question:'',options:[],recommendation:''}}));});`)
+  const sessionFile = path.join(fixture.root, 'session.txt')
+  const result = await executeAgentAdapter({ provider: 'codex', job: { ...job(fixture.root), sessionFile }, env: fixture.env, log: () => {} })
+  assert.equal(result.session, 'thread-123')
+  assert.equal(result.decision, null)
+  assert.equal(await readFile(sessionFile, 'utf8'), 'thread-123')
+  await executeAgentAdapter({ provider: 'codex', job: { ...job(fixture.root), resume: 'thread-123' }, env: fixture.env, log: () => {} })
+  const args = JSON.parse(await readFile(path.join(fixture.root, 'args.json'), 'utf8'))
+  assert.deepEqual(args.slice(0, 7), ['-a', 'never', '--sandbox', 'workspace-write', 'exec', 'resume', 'thread-123'])
+  assert.ok(args.includes('--output-schema'))
+})

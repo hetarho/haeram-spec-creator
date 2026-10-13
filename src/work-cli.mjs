@@ -12,7 +12,7 @@ const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
   work configure --work <name> [start의 검증·push·review·allow-tool 옵션]
   work claim <T###> --work <name> [--workspace auto|current|new] [--path <path>] [--owner <label>]
   work claim-next --work <name> --owner <label> [--workspace auto|current|new]
-  work next --owner <label> [--work <name> | --start] [--wait <seconds>] [--workspace auto|current|new]
+  work next --owner <label> [--work <name> | --start] [--wait <seconds>] [--workspace auto|current|new] [--coordinator] [--autopilot]
   work resume --work <name> --owner <label> [--attempt <id>]
   work review-claim --work <name> --owner <label> [--attempt <id>] [--wait <seconds>]
   work review-finish --review <id> --result-file <json-file>
@@ -23,13 +23,14 @@ const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
     [--task-verify <command>] [--group-verify <command>]
     [--reviewer-provider codex|claude] [--model <id>] [--reviewer-model <id>] [--dry-run]
     [--timeout-ms <ms>] [--max-dispatches <n>] [--max-task-runs <n>]
+    [--autopilot] [--decision-wait-ms <ms>] [--checkpoint-ms <ms>]
   work runner-recover --work <name>
   work status
   work board --work <name>
   work brief --attempt <id>
   work history --work <name> [--task <T###>]
   work sync --work <name>
-  work update --attempt <id> [--status doing|blocked] [--reason <text>]
+  work update --attempt <id> [--status doing|blocked] [--reason <text>] [--decision-file <json>] [--note <text>]
   work submit --attempt <id> [--verify <command> ...]
   work integrate --attempt <id> [--verify <command> ...] [--auto-correct]
   work finish --work <name> [--verify <command> ...]
@@ -51,6 +52,8 @@ next: 세션 루프. 자기 단위 → 수정 요청 → 리뷰 → 다음 단�
   반환하고, 승인된 단위의 통합과 묶음 완료 검증은 백그라운드 CLI로 시작합니다. --start는 활성 묶음이 없으면 새로 만듭니다.
 submit/integrate/finish: 지정한 검증 명령을 셸로 실행합니다(--verify-timeout-ms, 기본 1시간). 워커 변경은 먼저 커밋하세요.
 next/review-claim --wait: 배정이 생길 때까지 모델 호출 없이 기다립니다. complete·stalled·timeout이면 반환합니다.
+맡김(--autopilot): 기획 결정이 필요한 워커는 결정 요청을 남기고(update --decision-file) 다음 일로 갑니다. 조정자(next --coordinator)가
+  decide를 받아 잠정 결정한 뒤 update --status doing --note로 재개하면, 실행기는 기획 브랜치를 합치고 같은 세션을 이어 실행합니다.
 release/recover: 기존 작업자·명령이 종료됐음을 확인한 뒤 실행하세요. TTL 자동 회수는 없습니다.
 `
 
@@ -59,12 +62,12 @@ const LISTS = ['verify', 'task-verify', 'group-verify', 'review-path', 'allow-to
 const allowed = {
   start: ['workspace', 'base', 'branch', 'path', 'workers', 'reviewers', 'max-pending', 'task-verify', 'verify', 'group-verify', ...POLICY],
   configure: ['work', 'task-verify', 'verify', 'group-verify', ...POLICY], claim: ['work', 'workspace', 'path', 'owner'],
-  'claim-next': ['work', 'owner', 'workspace', 'path'], next: ['work', 'owner', 'workspace', 'path', 'wait', 'workers', 'reviewers', 'max-pending', 'task-verify', 'verify', 'group-verify'], resume: ['work', 'owner', 'attempt'],
+  'claim-next': ['work', 'owner', 'workspace', 'path'], next: ['work', 'owner', 'workspace', 'path', 'wait', 'workers', 'reviewers', 'max-pending', 'task-verify', 'verify', 'group-verify', ...POLICY], resume: ['work', 'owner', 'attempt'],
   'review-claim': ['work', 'owner', 'attempt', 'wait'], 'review-finish': ['review', 'result-file'],
   'review-update': ['review'], 'review-release': ['review', 'reason'],
-  doctor: [], run: ['work', 'adapter', 'verify', 'task-verify', 'group-verify', 'verify-timeout-ms', 'provider', 'providers', 'reviewer-provider', 'model', 'reviewer-model', 'timeout-ms', 'max-dispatches', 'max-task-runs'], 'runner-recover': ['work'],
+  doctor: [], run: ['work', 'adapter', 'verify', 'task-verify', 'group-verify', 'verify-timeout-ms', 'provider', 'providers', 'reviewer-provider', 'model', 'reviewer-model', 'timeout-ms', 'max-dispatches', 'max-task-runs', 'decision-wait-ms', 'checkpoint-ms'], 'runner-recover': ['work'],
   history: ['work', 'task'], sync: ['work'],
-  status: [], board: ['work'], brief: ['attempt'], update: ['attempt', 'status', 'reason'],
+  status: [], board: ['work'], brief: ['attempt'], update: ['attempt', 'status', 'reason', 'decision-file', 'note'],
   submit: ['attempt', 'verify', 'verify-timeout-ms'], integrate: ['attempt', 'verify', 'verify-timeout-ms'], finish: ['work', 'verify', 'verify-timeout-ms'], release: ['attempt', 'reason'],
   cleanup: ['attempt'], recover: ['attempt', 'work'], unlock: ['lock-id'],
 }
@@ -86,6 +89,8 @@ async function dispatch(args) {
     const argument = args.shift()
     if (argument === '--dry-run' && action === 'run') { options.dryRun = true; continue }
     if (argument === '--start' && action === 'next') { options.start = true; continue }
+    if (argument === '--coordinator' && action === 'next') { options.coordinator = true; continue }
+    if (argument === '--autopilot' && ['next', 'run'].includes(action)) { options.autopilot = true; continue }
     if (argument === '--auto-correct' && action === 'integrate') { options.autoCorrect = true; continue }
     if (argument === '--json') { options.json = true; continue }
     const equals = argument.indexOf('=')
