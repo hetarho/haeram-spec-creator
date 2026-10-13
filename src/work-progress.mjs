@@ -1,7 +1,7 @@
 import { activeAttempt, workerBusy, pendingReview, unitTasks } from './work-policy.mjs'
 
 const pick = (value, keys) => Object.fromEntries(keys.filter((key) => value?.[key] !== undefined).map((key) => [key, value[key]]))
-export const progressChecks = (values) => values?.map((value) => pick(value, ['command', 'startedAt', 'finishedAt']))
+export const progressChecks = (values) => values?.map((value) => pick(value, ['command', 'startedAt', 'finishedAt', 'cached']))
 const checks = progressChecks
 const step = (value) => ({ ...pick(value, ['taskId', 'commit', 'at']), verification: checks(value.verification) ?? [] })
 const dispatch = (value) => value && pick(value, ['id', 'runner', 'role', 'slot', 'provider', 'model', 'status', 'startedAt', 'finishedAt', 'error', 'summary'])
@@ -10,7 +10,7 @@ const run = (value) => value && pick(value, ['id', 'adapter', 'providers', 'work
 
 export function progressAttempt(value) {
   return {
-    ...pick(value, ['id', 'group', 'taskId', 'tasks', 'lane', 'owner', 'contributors', 'status', 'reason', 'error', 'createdAt', 'startCommit', 'verifiedCommit', 'submittedBase', 'submissionId', 'submittedAt', 'integratedCommit', 'integratedAt', 'releasedAt', 'cleanedAt']),
+    ...pick(value, ['id', 'group', 'taskId', 'tasks', 'lane', 'owner', 'contributors', 'status', 'reason', 'error', 'createdAt', 'startCommit', 'verifiedCommit', 'submittedBase', 'submissionId', 'submittedAt', 'integratedCommit', 'integratedAt', 'releasedAt', 'cleanedAt', 'risk']),
     ...(value.dispatch ? { dispatch: dispatch(value.dispatch) } : {}),
     ...(value.review ? { review: review(value.review) } : {}),
     ...(value.reviewHistory?.length ? { reviewHistory: value.reviewHistory.map(review) } : {}),
@@ -20,7 +20,7 @@ export function progressAttempt(value) {
   }
 }
 
-const progressGroup = (value) => ({ ...pick(value, ['id', 'branch', 'status', 'createdAt', 'limits', 'verified']),
+const progressGroup = (value) => ({ ...pick(value, ['id', 'branch', 'status', 'createdAt', 'limits', 'verified', 'push', 'review', 'pushed']),
   ...(value.runner ? { runner: run(value.runner) } : {}), ...(value.lastRun ? { lastRun: run(value.lastRun) } : {}) })
 
 // History and the latest state are committed by the same atomic runtime rename.

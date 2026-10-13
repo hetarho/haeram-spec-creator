@@ -90,7 +90,8 @@ export async function runWork(options) {
   const abort = new AbortController()
   let heartbeatError = null
   let snapshot = null, snapshotError = null, finish = null, finishError = null
-  const outcomeFor = (board) => interrupted || heartbeatError ? 'interrupted' : board.tasks.length === 0 && !finishError ? 'completed' : dispatched >= config.maxDispatches ? 'dispatch-limit' : 'needs-attention'
+  const outcomeFor = (board) => interrupted || heartbeatError ? 'interrupted' : board.tasks.length === 0 && !finishError ? 'completed'
+    : board.tasks.every((task) => task.mainSession) && !finishError ? 'main-session' : dispatched >= config.maxDispatches ? 'dispatch-limit' : 'needs-attention'
   const kill = (job) => {
     if (!job.child || job.settled) return
     try { if (process.platform === 'win32') job.child.kill('SIGTERM'); else process.kill(-job.child.pid, 'SIGTERM') } catch {}
@@ -272,7 +273,7 @@ export async function runWork(options) {
     for (const job of [...jobs.values()]) { job.error ??= 'runner stopped before accepting result'; await settle(job) }
     process.off('SIGINT', stop); process.off('SIGTERM', stop)
     let finalBoard = await workBoard(options).catch(() => null)
-    if (groupVerify.length && !interrupted && !heartbeatError && finalBoard && !finalBoard.tasks.some((task) => !task.st?.startsWith('blocked@')) &&
+    if (groupVerify.length && !interrupted && !heartbeatError && finalBoard && !finalBoard.tasks.some((task) => !task.st?.startsWith('blocked@') && !task.mainSession) &&
         !finalBoard.attempts.some(activeAttempt)) {
       try { finish = (await finishWork({ ...options, verify: groupVerify, runnerId: run.id, signal: abort.signal })).verified } catch (error) {
         finishError = error.message

@@ -9,7 +9,7 @@ import { readRuntime, transaction } from './work-runtime.mjs'
 import { startWork, claimNextWork, recoverWork, workInternals } from './work-groups.mjs'
 import { claimReview, resumeWork } from './work-review.mjs'
 import { activeAttempt, unitTasks, overlaps } from './work-policy.mjs'
-import { planUnits } from './task-graph.mjs'
+import { planUnits, mainSessionTasks } from './task-graph.mjs'
 
 const { repository, groupOf, fail, head, groupVerification } = workInternals
 const cli = fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.url))
@@ -72,7 +72,8 @@ async function kickGate(context, options, id) {
   else if (!attempts.some(activeAttempt) && group.verify?.group?.length) {
     const target = await head(context.cwd, `refs/heads/${group.branch}`)
     const board = await readTaskBoard({ targetRoot: context.cwd, ref: target })
-    if (board.ok && !board.warnings.length && board.tasks.every((task) => task.st?.startsWith('blocked@')) &&
+    const deferred = mainSessionTasks(board.tasks)
+    if (board.ok && !board.warnings.length && board.tasks.every((task) => task.st?.startsWith('blocked@') || deferred.has(task.id)) &&
         !(await groupVerification(context, group))?.current && group.finishFailure?.commit !== target) args = ['finish', '--work', group.id]
   }
   if (!args) return
@@ -106,12 +107,17 @@ async function outlook(context, id, owner) {
   const board = await readTaskBoard({ targetRoot: context.cwd, ref: target })
   const live = Object.values(state.attempts).filter((entry) => entry.group === group.id && activeAttempt(entry))
   const owned = new Set(live.flatMap(unitTasks))
-  const open = board.tasks.filter((task) => task.st === 'todo' && !owned.has(task.id))
+  // Explore tasks and their dependents belong to the main session, never to this group.
+  const deferred = mainSessionTasks(board.tasks)
+  const open = board.tasks.filter((task) => task.st === 'todo' && !owned.has(task.id) && !deferred.has(task.id))
   const moving = live.filter((entry) => entry.status !== 'blocked')
   const blocked = live.filter((entry) => entry.status === 'blocked').map((entry) => ({ attempt: entry.id, tasks: unitTasks(entry), owner: entry.owner, reason: entry.reason ?? null }))
   if (!open.length && !live.length) {
     const verified = await groupVerification(context, group)
-    if (!group.verify?.group?.length || verified?.current) return { state: 'complete', verified, branch: group.branch }
+    if (!group.verify?.group?.length || verified?.current) {
+      const later = board.tasks.filter((task) => deferred.has(task.id)).map((task) => task.id)
+      return later.length ? { state: 'main-session', tasks: later, verified, branch: group.branch } : { state: 'complete', verified, branch: group.branch }
+    }
     if (group.finishFailure?.commit === target) return { state: 'stalled', finishFailure: group.finishFailure }
     return { state: 'waiting', reason: 'finishing' }
   }
@@ -135,6 +141,7 @@ const INSTRUCTION = {
   'needs-reviewer': '이 세션의 제출물만 남아 있어 독립 리뷰어가 필요하다. 다른 세션을 열어 같은 요청을 하게 하거나, 새 컨텍스트의 서브에이전트에서 다른 owner로 review-task를 실행한 뒤 work next를 다시 호출한다.',
   complete: '남은 일이 없다. 묶음 브랜치와 검증 커밋을 보고하고 main 반영 여부를 사용자에게 묻는다.',
   stalled: 'blocked·finishFailure 원인을 사용자에게 보고하고 멈춘다. 해결되면 work next를 다시 호출한다.',
+  'main-session': '묶음에서 할 일은 끝났다. 남은 tasks는 explore 태스크와 그 후속이라 메인 세션에서 단독으로(implement-task) 진행한다.',
 }
 
 async function nextAction(context, options) {

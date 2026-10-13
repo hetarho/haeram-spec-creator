@@ -97,9 +97,23 @@ function unitOrder(tasks) {
   return ordered
 }
 
+// Explore tasks run in the main session, and so does everything that waits on them:
+// a work group never assigns them, and finishing a group does not wait for them.
+export function mainSessionTasks(tasks) {
+  const bound = new Set(tasks.filter((task) => task.explore).map((task) => task.id))
+  for (let grown = true; grown;) {
+    grown = false
+    for (const task of tasks) {
+      if (!bound.has(task.id) && task.deps.some((dep) => bound.has(dep))) { bound.add(task.id); grown = true }
+    }
+  }
+  return bound
+}
+
 // claimed holds task IDs already owned by an active attempt; they never join a new unit.
 export function planUnits(tasks, doneIds, claimed = new Set()) {
   const done = new Set(doneIds)
+  const mainSession = mainSessionTasks(tasks)
   const units = new Map()
   for (const task of tasks.filter((entry) => !claimed.has(entry.id))) {
     const key = unitKey(task.id, task.lane)
@@ -112,6 +126,7 @@ export function planUnits(tasks, doneIds, claimed = new Set()) {
     const waitingOn = [...new Set(unit.tasks.flatMap((task) => task.deps.filter((dep) => !ids.includes(dep) && !done.has(dep))))].sort(byId)
     return { key: unit.key, lane: unit.lane, ids, tasks: tasksInOrder, waitingOn,
       touches: [...new Set(unit.tasks.flatMap((task) => task.touches ?? []))],
-      ready: waitingOn.length === 0 && unit.tasks.every((task) => task.st === 'todo') }
+      mainSession: unit.tasks.some((task) => mainSession.has(task.id)),
+      ready: waitingOn.length === 0 && unit.tasks.every((task) => task.st === 'todo') && !unit.tasks.some((task) => mainSession.has(task.id)) }
   }).sort((a, b) => byId(a.ids[0], b.ids[0]))
 }

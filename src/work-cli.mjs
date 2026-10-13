@@ -1,4 +1,4 @@
-import { inspectWork, startWork, configureWork, claimWork, claimNextWork, updateWork, releaseWork, submitWork, integrateWork, finishWork, cleanupWork, recoverWork, workBoard, workHistory, syncWork, unlockWork } from './work-groups.mjs'
+import { inspectWork, startWork, configureWork, claimWork, claimNextWork, updateWork, releaseWork, submitWork, integrateWork, finishWork, cleanupWork, recoverWork, workBoard, workHistory, syncWork, unlockWork, workBrief } from './work-groups.mjs'
 import { finishReview, releaseReview, updateReview, resumeWork } from './work-review.mjs'
 import { nextWork, claimReviewWaiting } from './work-wait.mjs'
 import { runWork, recoverRunner } from './work-runner.mjs'
@@ -8,7 +8,8 @@ import { SkillPackageError } from './errors.mjs'
 const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
   work start <name> [--workspace auto|current|new] [--base <ref>] [--branch <branch>] [--path <path>]
     [--task-verify <command>] [--verify <command>] [--group-verify <command>]
-  work configure --work <name> [--task-verify <command>] [--verify <command>] [--group-verify <command>]
+    [--push <branch>|-] [--remote <name>] [--review risky|all] [--review-path <path> ...] [--review-lines <n>] [--allow-tool <rule> ...]
+  work configure --work <name> [start의 검증·push·review·allow-tool 옵션]
   work claim <T###> --work <name> [--workspace auto|current|new] [--path <path>] [--owner <label>]
   work claim-next --work <name> --owner <label> [--workspace auto|current|new]
   work next --owner <label> [--work <name> | --start] [--wait <seconds>] [--workspace auto|current|new]
@@ -25,6 +26,7 @@ const HELP = `작업 묶음 (Orca 등 외부 도구 없이도 사용 가능)
   work runner-recover --work <name>
   work status
   work board --work <name>
+  work brief --attempt <id>
   work history --work <name> [--task <T###>]
   work sync --work <name>
   work update --attempt <id> [--status doing|blocked] [--reason <text>]
@@ -40,6 +42,9 @@ start 배정 한도: --workers <n> (4), --reviewers <n> (1), --max-pending <n> (
 auto: 배정 가능한 기존 linked worktree는 연결하고, 기획 공간에서는 새 worktree를 생성합니다.
 current: 현재 checkout을 사용합니다. new: 항상 별도 worktree를 만듭니다.
 lane: 같은 lane의 태스크는 한 작업 공간에서 순서대로 구현하고 함께 리뷰·통합합니다.
+push: 통합된 단위마다 그 브랜치로 push합니다(원격이 앞서 있으면 후보에서 먼저 합칩니다).
+review: risky(기본)는 위험한 단위만 리뷰하고 나머지는 정책 승인합니다. all은 모든 단위를 리뷰합니다.
+explore 태스크와 그 후속은 배정하지 않습니다 — 메인 세션에서 단독으로 진행합니다.
 검증 단계: submit=태스크(선택, 변경 영향) · integrate=단위 통합 · finish=묶음 완료. start/configure가 저장한
   --task-verify/--verify/--group-verify를 기본값으로 쓰며, 명령에는 HAERAM_TIER·HAERAM_DIFF_BASE·HAERAM_TASK(S)가 전달됩니다.
 next: 세션 루프. 자기 단위 → 수정 요청 → 리뷰 → 다음 단위 순으로 action(implement|review|blocked|wait|complete|stalled)을
@@ -49,21 +54,23 @@ next/review-claim --wait: 배정이 생길 때까지 모델 호출 없이 기다
 release/recover: 기존 작업자·명령이 종료됐음을 확인한 뒤 실행하세요. TTL 자동 회수는 없습니다.
 `
 
+const POLICY = ['push', 'remote', 'review', 'review-path', 'review-lines', 'allow-tool']
+const LISTS = ['verify', 'task-verify', 'group-verify', 'review-path', 'allow-tool']
 const allowed = {
-  start: ['workspace', 'base', 'branch', 'path', 'workers', 'reviewers', 'max-pending', 'task-verify', 'verify', 'group-verify'],
-  configure: ['work', 'task-verify', 'verify', 'group-verify'], claim: ['work', 'workspace', 'path', 'owner'],
+  start: ['workspace', 'base', 'branch', 'path', 'workers', 'reviewers', 'max-pending', 'task-verify', 'verify', 'group-verify', ...POLICY],
+  configure: ['work', 'task-verify', 'verify', 'group-verify', ...POLICY], claim: ['work', 'workspace', 'path', 'owner'],
   'claim-next': ['work', 'owner', 'workspace', 'path'], next: ['work', 'owner', 'workspace', 'path', 'wait', 'workers', 'reviewers', 'max-pending', 'task-verify', 'verify', 'group-verify'], resume: ['work', 'owner', 'attempt'],
   'review-claim': ['work', 'owner', 'attempt', 'wait'], 'review-finish': ['review', 'result-file'],
   'review-update': ['review'], 'review-release': ['review', 'reason'],
   doctor: [], run: ['work', 'adapter', 'verify', 'task-verify', 'group-verify', 'verify-timeout-ms', 'provider', 'providers', 'reviewer-provider', 'model', 'reviewer-model', 'timeout-ms', 'max-dispatches', 'max-task-runs'], 'runner-recover': ['work'],
   history: ['work', 'task'], sync: ['work'],
-  status: [], board: ['work'], update: ['attempt', 'status', 'reason'],
+  status: [], board: ['work'], brief: ['attempt'], update: ['attempt', 'status', 'reason'],
   submit: ['attempt', 'verify', 'verify-timeout-ms'], integrate: ['attempt', 'verify', 'verify-timeout-ms'], finish: ['work', 'verify', 'verify-timeout-ms'], release: ['attempt', 'reason'],
   cleanup: ['attempt'], recover: ['attempt', 'work'], unlock: ['lock-id'],
 }
 const actions = { doctor: workDoctor, configure: configureWork, 'claim-next': claimNextWork, next: nextWork, resume: resumeWork, 'review-claim': claimReviewWaiting, 'review-finish': finishReview,
   'review-update': updateReview, 'review-release': releaseReview, run: runWork, 'runner-recover': recoverRunner, start: startWork, claim: claimWork, status: inspectWork, board: workBoard,
-  history: workHistory, sync: syncWork, update: updateWork, submit: submitWork, integrate: integrateWork, finish: finishWork, release: releaseWork,
+  history: workHistory, sync: syncWork, brief: workBrief, update: updateWork, submit: submitWork, integrate: integrateWork, finish: finishWork, release: releaseWork,
   cleanup: cleanupWork, recover: recoverWork, unlock: unlockWork }
 
 async function dispatch(args) {
@@ -87,7 +94,7 @@ async function dispatch(args) {
     const value = equals === -1 ? args.shift() : argument.slice(equals + 1)
     if (!value || value.startsWith('--')) throw new SkillPackageError(`${argument} 값이 필요합니다.`)
     const field = key === 'target' ? 'targetRoot' : key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())
-    if (['verify', 'task-verify', 'group-verify'].includes(key)) (options[field] ??= []).push(value)
+    if (LISTS.includes(key)) (options[field] ??= []).push(value)
     else options[field] = value
   }
   const result = await actions[action](options)

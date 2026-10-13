@@ -61,3 +61,16 @@ export const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z$/
 export const INBOX_LINE = /^- (\d{6}) (decided|parked|suggest) ([^:]+?): (\S.*)$/
 export const REPORT_FILE = /^(\d{6}-[A-Za-z0-9]{2,8})\.md$/
 export const REPORT_SECTIONS = ['done', 'decided', 'parked', 'checks', 'next']
+
+// Decision blocks by ID: the decision line plus its indented sub-lines and table rows.
+export function decisionBlocks(markdown) {
+  const blocks = new Map()
+  let current = null
+  for (const line of sections(markdown).get('decisions') ?? []) {
+    const head = line.match(/^-\s+([A-Z]{2,6}-\d+)\s+\[/)
+    if (head) { current = [line]; blocks.set(head[1], current) }
+    else if (current && /^\s+\S/.test(line)) current.push(line)
+    else if (line.trim() !== '') current = null
+  }
+  return new Map([...blocks].map(([id, lines]) => [id, lines.join('\n')]))
+}
