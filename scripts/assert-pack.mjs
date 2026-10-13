@@ -23,6 +23,8 @@ const requiredCoreFiles = [
   'src/agent-adapter.mjs',
   'src/work-providers.mjs',
   'src/work-progress.mjs',
+  'src/vibe.mjs',
+  'src/state-doc.mjs',
   'src/index.mjs',
   'package.json',
   'README.md',

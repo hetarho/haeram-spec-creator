@@ -1,0 +1,399 @@
+import { readFile, writeFile, readdir, mkdir, mkdtemp, rm, access } from 'node:fs/promises'
+import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import os from 'node:os'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { inspectWorkspace, git } from './workspace.mjs'
+import { runtimeRoot } from './work-runtime.mjs'
+import { sections, tableRows, quoteLine, quoteFields, exploreValue, INBOX_LINE, SESSION_TAG, TASK_ID } from './spec-format.mjs'
+import { activeRows, upsertActive, mergeState } from './state-doc.mjs'
+import { workingTree, checkKey, cachedPass, recordPass, withHeavyLock } from './check-cache.mjs'
+import { lintSpec } from './spec-lint.mjs'
+import { workInternals } from './work-groups.mjs'
+import { stateMergeArgs } from './git-merge.mjs'
+import { SkillPackageError } from './errors.mjs'
+
+const execute = promisify(execFile)
+const fail = (message, details = []) => { throw new SkillPackageError(message, details) }
+const STALE_MINUTES = 90
+export const minuteNow = () => `${new Date().toISOString().slice(0, 16)}Z`
+const hostName = () => os.hostname().replace(/\.local$/, '').replace(/[|\s]/g, '-') || 'host'
+
+function cfgOf(text) {
+  const map = new Map()
+  for (const line of sections(text).get('cfg') ?? []) {
+    const match = line.match(/^-\s+([\w-]+):\s*([^#]*)/)
+    if (match) map.set(match[1], match[2].trim())
+  }
+  return map
+}
+
+async function readOptional(file) {
+  try { return await readFile(file, 'utf8') } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+const exists = async (root, ref) => Boolean((await git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], [1]))?.trim())
+const sha = async (root, ref) => (await git(root, ['rev-parse', '--verify', `${ref}^{commit}`])).trim()
+const ancestor = async (root, older, newer) => (await git(root, ['merge-base', '--is-ancestor', older, newer], [1])) !== null
+
+// Fetch one branch; a branch the remote does not have is an answer, a network failure is not.
+async function fetchBranch(root, remote, source, target) {
+  try {
+    await execute('git', ['-C', root, 'fetch', '--quiet', remote, `+${source}:${target}`], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } })
+    return true
+  } catch (error) {
+    if (/couldn't find remote ref|no such ref/i.test(error.stderr ?? '')) return false
+    return fail(`원격 ${remote}에서 가져오지 못했습니다.`, [(error.stderr || error.message).trim()])
+  }
+}
+
+// Where this checkout pushes finished units: cfg push, else nothing chosen yet.
+async function session(options) {
+  const workspace = await inspectWorkspace(options)
+  if (!workspace.git?.head) fail('커밋이 있는 Git checkout이 필요합니다.')
+  const root = workspace.git.root
+  const state = await readOptional(path.join(root, 'spec/STATE.md'))
+  const push = state === null ? null : cfgOf(state).get('push') ?? null
+  const remotes = (await git(root, ['remote'])).split('\n').map((line) => line.trim()).filter(Boolean)
+  const remote = options.remote ?? (remotes.includes('origin') ? 'origin' : remotes[0] ?? null)
+  if (options.remote && !remotes.includes(options.remote)) fail(`원격이 없습니다: ${options.remote}`)
+  const target = push && !['-', '?'].includes(push) ? push : null
+  return { workspace, root, state, push, remote, target, branch: workspace.git.branch, runtime: runtimeRoot(workspace) }
+}
+
+async function unmerged(root) {
+  return (await git(root, ['diff', '--name-only', '--diff-filter=U'], [128]) ?? '').split('\n').filter(Boolean)
+}
+
+export async function vibeMergeState([base, ours, theirs]) {
+  if (!base || !ours || !theirs) fail('merge-state <base> <ours> <theirs>')
+  const result = mergeState(await readFile(base, 'utf8'), await readFile(ours, 'utf8'), await readFile(theirs, 'utf8'))
+  await writeFile(ours, result.text)
+  return result
+}
+
+// Bring the remote push branch into HEAD: fast-forward, or replay local commits on top
+// (rebase on the push branch itself, merge on any other branch). STATE merges by section.
+export async function vibeSync(options = {}) {
+  const context = await session(options)
+  if (!context.remote) return { schemaVersion: 1, ok: true, action: 'none', reason: 'no-remote' }
+  if (context.push === '-') return { schemaVersion: 1, ok: true, action: 'none', reason: 'push-disabled' }
+  if (!context.target) fail('cfg push가 정해지지 않았습니다. start-vibe에서 push할 브랜치를 정하세요.')
+  const { root, remote, target } = context
+  if (!(await fetchBranch(root, remote, `refs/heads/${target}`, `refs/remotes/${remote}/${target}`))) {
+    return { schemaVersion: 1, ok: true, action: 'none', reason: 'remote-branch-missing', target }
+  }
+  const upstream = `refs/remotes/${remote}/${target}`
+  const head = await sha(root, 'HEAD')
+  const theirs = await sha(root, upstream)
+  if (await ancestor(root, theirs, head)) return { schemaVersion: 1, ok: true, action: 'none', head, target }
+  if ((await git(root, ['status', '--porcelain', '--untracked-files=no'])).trim()) fail('커밋하지 않은 변경이 있어 원격을 가져올 수 없습니다. 먼저 커밋하세요.')
+  if (await ancestor(root, head, theirs)) {
+    if (!context.branch) fail('detached HEAD는 fast-forward할 수 없습니다.')
+    await git(root, ['merge', '--ff-only', '--quiet', upstream])
+    return { schemaVersion: 1, ok: true, action: 'ff', head: await sha(root, 'HEAD'), target }
+  }
+  const action = context.branch === target ? 'rebase' : 'merge'
+  try {
+    await git(root, [...await stateMergeArgs(context.root, context.runtime), ...(action === 'rebase' ? ['rebase', '--quiet', upstream] : ['merge', '--no-edit', '--quiet', upstream])])
+  } catch (error) {
+    const conflicts = await unmerged(root)
+    await git(root, [action, '--abort'], [1, 128])
+    fail(`원격 ${target}과 충돌했습니다. 직접 ${action}해 충돌을 해결하세요.`, conflicts.length ? conflicts : [error.stderr || error.message])
+  }
+  return { schemaVersion: 1, ok: true, action, head: await sha(root, 'HEAD'), target }
+}
+
+// Push HEAD to the push branch; a rejection means someone pushed first — sync and retry.
+export async function vibePush(options = {}) {
+  const context = await session(options)
+  if (context.push === '-') return { schemaVersion: 1, ok: true, pushed: null, reason: 'push-disabled' }
+  if (!context.target) fail('cfg push가 정해지지 않았습니다. start-vibe에서 push할 브랜치를 정하세요.')
+  if (!context.remote) fail('push할 원격이 없습니다. cfg push를 -로 두거나 원격을 추가하세요.')
+  let last
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const synced = await vibeSync(options)
+    try {
+      await git(context.root, ['push', '--quiet', context.remote, `HEAD:refs/heads/${context.target}`])
+      return { schemaVersion: 1, ok: true, pushed: await sha(context.root, 'HEAD'), target: context.target, remote: context.remote, attempts: attempt, sync: synced.action }
+    } catch (error) {
+      last = error.stderr || error.message
+      if (!/rejected|non-fast-forward|fetch first|stale info/i.test(last)) break
+    }
+  }
+  return fail('push하지 못했습니다.', [last])
+}
+
+// This session's presence row; the caller commits and pushes it.
+export async function vibeBeat(options = {}) {
+  if (!SESSION_TAG.test(options.tag ?? '')) fail('--tag에는 영숫자 2-8자의 세션 tag가 필요합니다.')
+  if (options.mode !== undefined && !['pair', 'autopilot'].includes(options.mode)) fail('--mode는 pair 또는 autopilot입니다.')
+  if (options.doing !== undefined && options.doing !== '-' && !TASK_ID.test(options.doing)) fail('--doing은 T### 또는 -입니다.')
+  const workspace = await inspectWorkspace(options)
+  const file = path.join(workspace.git?.root ?? workspace.targetRoot, 'spec/STATE.md')
+  const text = await readOptional(file)
+  if (text === null) fail('spec/STATE.md가 없습니다.')
+  const existing = activeRows(text).find((row) => row.tag === options.tag)
+  if (options.end) {
+    await writeFile(file, upsertActive(text, { tag: options.tag }, { remove: true }))
+    return { schemaVersion: 1, tag: options.tag, removed: Boolean(existing) }
+  }
+  if (!existing && !options.mode) fail('새 세션 행에는 --mode가 필요합니다.')
+  const at = minuteNow()
+  const row = { tag: options.tag, host: options.host ?? existing?.host ?? hostName(), mode: options.mode ?? existing.mode, since: existing?.since ?? at, at, doing: options.doing ?? existing?.doing ?? '-' }
+  await writeFile(file, upsertActive(text, row))
+  return { schemaVersion: 1, row }
+}
+
+// Snapshot the working tree (tracked, untracked, not ignored) onto wip/<tag> without touching
+// HEAD, the index or the current branch. Each snapshot builds on the previous one, so the
+// push is always a fast-forward.
+export async function vibeCheckpoint(options = {}) {
+  if (!SESSION_TAG.test(options.tag ?? '')) fail('--tag에는 세션 tag가 필요합니다.')
+  const context = await session(options)
+  const { root, remote } = context
+  const local = `refs/heads/wip/${options.tag}`
+  const tracking = remote ? `refs/remotes/${remote}/wip/${options.tag}` : null
+  if (remote && context.push !== '-') await fetchBranch(root, remote, `refs/heads/wip/${options.tag}`, tracking).catch(() => false)
+  const known = []
+  for (const ref of [local, tracking].filter(Boolean)) if (await exists(root, ref)) known.push(await sha(root, ref))
+  let previous = known[0] ?? null
+  if (known.length === 2 && known[0] !== known[1] && await ancestor(root, known[0], known[1])) previous = known[1]
+  const tree = await workingTree(root)
+  const head = await sha(root, 'HEAD')
+  if (previous && (await git(root, ['rev-parse', `${previous}^{tree}`])).trim() === tree && await ancestor(root, head, previous)) {
+    return { schemaVersion: 1, changed: false, commit: previous, branch: `wip/${options.tag}` }
+  }
+  const parents = previous ? [previous] : []
+  if (!previous || !(await ancestor(root, head, previous))) parents.push(head)
+  const message = `checkpoint ${options.tag}: ${options.message ?? 'work in progress'}`
+  const commit = (await git(root, ['commit-tree', tree, ...parents.flatMap((parent) => ['-p', parent]), '-m', message])).trim()
+  await git(root, ['update-ref', local, commit])
+  let pushed = false, pushError = null
+  if (remote && context.push !== '-') {
+    try { await git(root, ['push', '--quiet', remote, `${local}:refs/heads/wip/${options.tag}`]); pushed = true } catch (error) { pushError = error.stderr || error.message }
+  }
+  return { schemaVersion: 1, changed: true, commit, tree, branch: `wip/${options.tag}`, pushed, pushError }
+}
+
+const minutesSince = (iso) => iso ? (Date.now() - Date.parse(iso)) / 60000 : Infinity
+
+async function commitTime(root, ref) {
+  return (await git(root, ['log', '-1', '--format=%cI', ref, '--'], [128]))?.trim() || null
+}
+
+function summarize(text) {
+  const map = sections(text)
+  const rows = (name) => tableRows(map.get(name))
+  const tasks = rows('tasks').map(([id, title, , dep, st]) => ({ id, title, dep, st }))
+  const pending = rows('ssot').filter(([, rev, tasked]) => Number(tasked) < Number(rev)).map(([id, rev, tasked, delta]) => ({ id, rev: Number(rev), tasked: Number(tasked), pending: delta }))
+  const reviews = rows('review').filter(([, st]) => st?.startsWith('ready@')).map(([id, st]) => ({ id, st }))
+  const ideation = rows('ideation').filter(([, st]) => /^(open|ready)@/.test(st ?? '')).map(([id, st]) => ({ id, st }))
+  const inbox = (map.get('inbox') ?? []).map((line) => line.trim().match(INBOX_LINE)).filter(Boolean)
+    .map(([line, date, kind, refs, text]) => ({ line, date, kind, refs: refs.split(/\s+/), text }))
+  return { tasks, pending, reviews, ideation, inbox }
+}
+
+// What a session needs before its first question: who else is working (as the remote sees
+// it), what is left, and which way to go.
+export async function vibeStatus(options = {}) {
+  const workspace = await inspectWorkspace(options)
+  const root = workspace.git?.root ?? workspace.targetRoot
+  const text = await readOptional(path.join(root, 'spec/STATE.md'))
+  if (text === null) return { schemaVersion: 1, route: 'architecture', reason: 'spec/STATE.md가 없습니다.', git: Boolean(workspace.git) }
+  const cfg = cfgOf(text)
+  const result = { schemaVersion: 1, tag: options.tag ?? null, cfg: { level: cfg.get('level') ?? null, lang: cfg.get('lang') ?? null, push: cfg.get('push') ?? null } }
+  let remoteText = null
+  if (workspace.git?.head) {
+    const context = await session(options)
+    const branch = context.target ?? context.branch
+    let fetchError = null
+    if (context.remote && options.fetch !== false) {
+      try { await git(root, ['fetch', '--quiet', context.remote]) } catch (error) { fetchError = (error.stderr || error.message).trim() }
+    }
+    const upstream = context.remote && branch ? `refs/remotes/${context.remote}/${branch}` : null
+    const remoteHead = upstream && await exists(root, upstream) ? await sha(root, upstream) : null
+    let ahead = 0, behind = 0
+    if (remoteHead) [ahead, behind] = (await git(root, ['rev-list', '--left-right', '--count', `HEAD...${remoteHead}`])).trim().split(/\s+/).map(Number)
+    if (remoteHead) remoteText = await git(root, ['show', `${remoteHead}:spec/STATE.md`], [128])
+    const dirty = (await git(root, ['status', '--porcelain'])).split('\n').filter(Boolean).length
+    result.git = { branch: context.branch, head: workspace.git.head, remote: context.remote, target: branch, remoteHead, ahead, behind, dirty, fetchError }
+    // Others as the remote sees them: their active rows, refreshed by their wip/<tag> snapshots.
+    const seen = activeRows(remoteText ?? text)
+    const sessions = []
+    for (const row of seen.filter((entry) => entry.tag !== options.tag)) {
+      const wipAt = context.remote ? await commitTime(root, `refs/remotes/${context.remote}/wip/${row.tag}`) : null
+      const lastSeen = [row.at, wipAt].filter(Boolean).map((value) => new Date(Date.parse(value)).toISOString()).sort().at(-1) ?? null
+      const minutes = minutesSince(lastSeen)
+      sessions.push({ ...row, wipAt, lastSeen, minutesAgo: Number.isFinite(minutes) ? Math.round(minutes) : null, stale: minutes > STALE_MINUTES })
+    }
+    const live = new Set(seen.map((row) => row.tag))
+    const doing = summarize(remoteText ?? text).tasks.filter((task) => task.st?.startsWith('doing@')).map((task) => ({ ...task, tag: task.st.split('.')[1] ?? null }))
+    result.others = sessions
+    result.orphanDoing = doing.filter((task) => task.tag !== options.tag && !live.has(task.tag))
+    result.self = seen.find((entry) => entry.tag === options.tag) ?? null
+  }
+  const local = summarize(text)
+  const explore = []
+  for (const task of local.tasks) {
+    const file = (await readdir(path.join(root, 'spec/tasks')).catch(() => [])).find((name) => name.startsWith(`${task.id}.`))
+    const content = file ? await readOptional(path.join(root, 'spec/tasks', file)) : null
+    const timebox = exploreValue(quoteFields(quoteLine(content ?? '') ?? '').get('explore'))
+    if (timebox) explore.push({ id: task.id, timebox })
+  }
+  const openReports = []
+  for (const file of (await readdir(path.join(root, 'spec/reports')).catch(() => [])).filter((name) => name.endsWith('.md'))) {
+    if (quoteFields(quoteLine((await readOptional(path.join(root, 'spec/reports', file))) ?? '') ?? '').get('to') === '-') openReports.push(`spec/reports/${file}`)
+  }
+  const ownTag = (task) => task.st?.startsWith('doing@') && task.st.split('.')[1] === options.tag
+  const implementation = { todo: local.tasks.filter((task) => task.st === 'todo').map((task) => task.id),
+    resume: local.tasks.filter(ownTag).map((task) => task.id),
+    blocked: local.tasks.filter((task) => task.st?.startsWith('blocked@')).map((task) => task.id),
+    pending: local.pending, reviews: local.reviews, explore }
+  const planning = { ideation: local.ideation }
+  const hasImplementation = implementation.todo.length + implementation.resume.length + implementation.pending.length + implementation.reviews.length > 0
+  const hasPlanning = planning.ideation.length > 0
+  return { ...result, implementation, planning, inbox: local.inbox, openReports,
+    route: hasImplementation && hasPlanning ? 'choose' : hasImplementation ? 'implementation' : hasPlanning ? 'planning' : 'ideation-first' }
+}
+
+const which = (command) => execute('sh', ['-c', `command -v ${command}`], { timeout: 5000 }).then(() => true, () => false)
+
+// Everything autopilot needs before the user leaves. needsUser lists what only a person can fix.
+export async function vibePreflight(options = {}) {
+  const context = await session(options)
+  const checks = []
+  const add = (name, ok, detail, needsUser = false) => checks.push({ name, ok, detail, needsUser: !ok && needsUser })
+  add('push-target', context.push !== null && context.push !== '?', context.push === '-' ? 'commit only (cfg push: -)' : context.target ?? 'cfg push is not chosen', true)
+  if (context.target) {
+    if (!context.remote) add('remote', false, 'no git remote for cfg push', true)
+    else {
+      try {
+        await git(context.root, ['push', '--dry-run', '--quiet', context.remote, `HEAD:refs/heads/${context.target}`])
+        add('push-permission', true, `${context.remote}/${context.target}`)
+      } catch (error) {
+        const detail = (error.stderr || error.message).trim()
+        // Being behind is fine (vibe push syncs first); auth or network failures are not.
+        const behind = /rejected|non-fast-forward|fetch first/i.test(detail)
+        add('push-permission', behind, behind ? `${context.remote}/${context.target} (behind; vibe push syncs)` : detail, !behind)
+      }
+    }
+  }
+  const dirty = (await git(context.root, ['status', '--porcelain'])).split('\n').filter(Boolean)
+  add('clean', dirty.length === 0, dirty.length ? `${dirty.length} uncommitted paths — commit or leave them out of unit commits` : 'clean')
+  const lint = await lintSpec({ targetRoot: context.root })
+  add('spec-lint', lint.ok, lint.ok ? `${lint.warnings.length} warnings` : lint.errors.slice(0, 5).join(' / '))
+  add('keep-awake', process.platform !== 'darwin' || await which('caffeinate'), process.platform === 'darwin' ? 'caffeinate' : `${process.platform}: keep the machine awake yourself`)
+  let workflows = false
+  try { await access(path.join(context.root, '.github/workflows')); workflows = true } catch {}
+  if (workflows) {
+    const gh = await execute('gh', ['auth', 'status'], { timeout: 10000 }).then(() => true, () => false)
+    add('ci-access', gh, gh ? 'gh can read CI runs' : 'gh is missing or logged out — CI results after push cannot be checked', true)
+  }
+  if (options.probe) checks.push(await probeWorker(context, options))
+  return { schemaVersion: 1, ok: checks.every((check) => check.ok), checks, needsUser: checks.filter((check) => check.needsUser) }
+}
+
+const PROBE_SCHEMA = { type: 'object', additionalProperties: false, required: ['ran', 'exitCode', 'denied', 'note'],
+  properties: { ran: { type: 'boolean' }, exitCode: { type: 'integer' }, denied: { type: 'boolean' }, note: { type: 'string' } } }
+
+// Runs the command once through a real headless worker in a fresh, never-trusted worktree —
+// the same place work-group workers run — so a permission gap shows before the user leaves.
+async function probeWorker(context, options) {
+  const provider = options.provider ?? (await which('claude') ? 'claude' : 'codex')
+  const allow = options.allowTool ?? []
+  const place = await workInternals.destination({ workspace: context.workspace, cwd: context.root }, `probe-${randomUUID().slice(0, 8)}`)
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'haeram-probe-'))
+  await git(context.root, ['worktree', 'add', '--detach', '--quiet', place, 'HEAD'])
+  try {
+    const prompt = `Run exactly this shell command once with your shell tool from the current directory, and nothing else:\n${options.probe}\nThen report JSON {"ran":bool,"exitCode":int,"denied":bool,"note":string}; denied=true when the tool call was refused for permission.`
+    const schemaFile = path.join(temporary, 'schema.json')
+    const resultFile = path.join(temporary, 'result.json')
+    await writeFile(schemaFile, JSON.stringify(PROBE_SCHEMA))
+    const args = provider === 'claude'
+      ? ['--print', '--output-format', 'json', '--json-schema', JSON.stringify(PROBE_SCHEMA), '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
+          '--tools', 'Bash,Read', '--allowedTools', ['Read', ...allow].join(',')]
+      : ['-a', 'never', 'exec', '--sandbox', 'workspace-write', '--output-schema', schemaFile, '--output-last-message', resultFile, '-']
+    const env = { ...(options.env ?? process.env) }
+    delete env.CLAUDECODE
+    const output = await new Promise((resolve, reject) => {
+      const child = spawn(provider, args, { cwd: place, env, stdio: ['pipe', 'pipe', 'pipe'] })
+      let stdout = '', stderr = ''
+      const timer = setTimeout(() => child.kill('SIGTERM'), Number(options.probeTimeoutMs ?? 15 * 60 * 1000))
+      child.stdout.on('data', (chunk) => { stdout += chunk })
+      child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-4000) })
+      child.on('error', reject)
+      child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve(stdout) : reject(new Error(`${provider} exited ${code}: ${stderr.trim()}`)) })
+      child.stdin.end(prompt)
+    })
+    const result = provider === 'claude' ? JSON.parse(output).structured_output : JSON.parse(await readFile(resultFile, 'utf8'))
+    const ok = Boolean(result?.ran) && !result.denied && result.exitCode === 0
+    return { name: 'worker-probe', ok, needsUser: !ok, detail: `${provider}: ${result?.denied ? 'denied' : `exit ${result?.exitCode}`} — ${result?.note ?? ''}`.trim(), allowTool: allow }
+  } catch (error) {
+    return { name: 'worker-probe', ok: false, needsUser: true, detail: error.message }
+  } finally {
+    await git(context.root, ['worktree', 'remove', '--force', place], [128]).catch(() => {})
+    await rm(temporary, { recursive: true, force: true })
+  }
+}
+
+// Keep the machine awake while unattended work runs (macOS caffeinate, bounded by hours).
+export async function vibeAwake(options = {}) {
+  const context = await session(options)
+  const file = path.join(context.runtime, 'awake.json')
+  const previous = JSON.parse((await readOptional(file)) ?? 'null')
+  const running = previous?.host === os.hostname() && (() => { try { process.kill(previous.pid, 0); return true } catch { return false } })()
+  if (options.stop) {
+    if (running) process.kill(previous.pid, 'SIGTERM')
+    await rm(file, { force: true })
+    return { schemaVersion: 1, stopped: Boolean(running) }
+  }
+  if (process.platform !== 'darwin') return { schemaVersion: 1, ok: false, reason: `${process.platform}: keep the machine awake yourself` }
+  if (running) return { schemaVersion: 1, ok: true, pid: previous.pid, until: previous.until, reused: true }
+  const hours = Number(options.hours ?? 12)
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 72) fail('--hours는 0보다 크고 72 이하입니다.')
+  const child = spawn('caffeinate', ['-i', '-m', '-s', '-t', String(Math.round(hours * 3600))], { detached: true, stdio: 'ignore' })
+  child.unref()
+  const until = new Date(Date.now() + hours * 3600000).toISOString()
+  await mkdir(context.runtime, { recursive: true })
+  await writeFile(file, JSON.stringify({ pid: child.pid, host: os.hostname(), until }))
+  return { schemaVersion: 1, ok: true, pid: child.pid, until }
+}
+
+// Run a check once per working tree: a pass on the same tree and command is reused.
+// --heavy waits for the clone-wide heavy lock first.
+export async function vibeCheck(options = {}, command) {
+  if (!command?.trim()) fail('vibe check -- <command>')
+  const workspace = await inspectWorkspace(options)
+  if (!workspace.git?.head) fail('커밋이 있는 Git checkout이 필요합니다.')
+  const root = workspace.git.root
+  const runtime = runtimeRoot(workspace)
+  const tree = await workingTree(root)
+  const key = checkKey(tree, command)
+  if (!options.noCache) {
+    const hit = await cachedPass(runtime, key)
+    if (hit) {
+      process.stderr.write(`vibe check: passed before on this tree (${tree.slice(0, 7)}, ${hit.at}) — not run again\n`)
+      return 0
+    }
+  }
+  const run = () => new Promise((resolve) => {
+    const child = spawn(command, { cwd: root, shell: true, stdio: 'inherit' })
+    child.on('close', (code, signal) => resolve(code ?? (signal ? 1 : 0)))
+    child.on('error', () => resolve(127))
+  })
+  const startedAt = Date.now()
+  const code = options.heavy
+    ? await withHeavyLock(runtime, command, run, { onWait: (owner) => process.stderr.write(`vibe check: waiting for the heavy lock (${owner?.label ?? 'unknown'})\n`) })
+    : await run()
+  if (code === 0) {
+    const after = await workingTree(root)
+    // A check that rewrote files did not verify the tree it started on.
+    if (after === tree) await recordPass(runtime, key, { command, tree, ms: Date.now() - startedAt })
+  }
+  return code
+}

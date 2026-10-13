@@ -3,6 +3,7 @@
 import { checkSkills, discoverSkills, installSkills, lintSpec, inspectWorkspace, readTaskBoard, SkillPackageError } from '../src/index.mjs'
 import { getPackageInfo } from '../src/package-info.mjs'
 import { runWorkCLI } from '../src/work-cli.mjs'
+import { runVibeCLI } from '../src/vibe-cli.mjs'
 import { inspectWork } from '../src/work-groups.mjs'
 
 const HELP = `haeram-spec-creator
@@ -17,6 +18,7 @@ const HELP = `haeram-spec-creator
   haeram-spec-creator board [--target <path>] [--json]
   haeram-spec-creator work <start|claim|status|board|update|submit|integrate|release|cleanup|recover|unlock> ...
   haeram-spec-creator work --help
+  haeram-spec-creator vibe <status|sync|push|beat|checkpoint|preflight|awake|check> ...  (start-vibe 세션 도구, vibe --help)
 
 옵션:
   --target <path>  설치·검사·조회할 프로젝트 (기본값: 현재 폴더)
@@ -85,6 +87,7 @@ async function main() {
   const rawArgs = process.argv.slice(2)
   const command = rawArgs[0] && !rawArgs[0].startsWith('-') ? rawArgs.shift() : undefined
   if (command === 'work') return runWorkCLI(rawArgs)
+  if (command === 'vibe') return runVibeCLI(rawArgs)
   const options = parseOptions(rawArgs)
 
   if (options.version || command === 'version') {
