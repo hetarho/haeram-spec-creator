@@ -27,6 +27,7 @@ description: >-
   ② `route:choose`(기획 거리와 구현 거리가 둘 다)일 때: 무엇부터 할지
   ③ 다른 기기의 살아 있는 세션이 보일 때: 이어받기(그 태스크를 넘겨받고 `wip/<tag>`의 변경을 가져온다) / 겹치지 않는 일만
   ④ cfg push가 `?`이거나 없을 때: push할 브랜치(`main` / 작업 브랜치 / 커밋만 `-`) — 답을 cfg에 쓴다
+  인자가 이미 답한 것(`/start-vibe 맡김`, `/start-vibe 함께 태그 기능`)은 묻지 않는다. 선택지형 질문 도구가 없으면 같은 질문을 텍스트로 하고 이 턴을 끝낸다 — 답할 사람이 없다고 스스로 판단해 모드를 정하지 않는다. 헤드리스 실행·오케스트레이터는 인자로 모드를 준다.
 - `vibe beat --tag <tag> --mode pair|autopilot`로 active 행을 쓰고 커밋·`vibe push` — 다른 기기가 이 세션을 본다.
 - **맡김**: `vibe preflight --json`(push 권한·검증 명령·절전 방지·CI 인증). 사람이 정해야 할 실패가 있으면 떠나기 전에 질문 한 번으로 해결한다 — 이것이 마지막 질문이다. 통과하면 `vibe awake`, 이 스킬의 assets/report.md를 `spec/reports/<YYMMDD>-<tag>.md`로 복사해 채우기 시작한다(FORMAT report).
 - **함께**: inbox가 있으면 먼저 보여 주고 한 번에 확인받는다. 승인 → 줄 삭제·log 1줄, 수정 → update-ssot 후 줄 삭제. 열린 보고서는 읽고 `to:`를 채워 닫는다.

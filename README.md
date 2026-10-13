@@ -5,21 +5,23 @@
 Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제약, 결정 사항, 완료 조건을 먼저 명확히 하고 각 단계의 결과를 다음 단계의 입력으로 이어 가도록 돕습니다. 이 저장소의 핵심은 라이브러리 API가 아니라 AI 에이전트가 필요할 때 불러 쓰는 스킬이며, npm 패키지는 여러 프로젝트에 그 스킬을 안전하게 설치하고 동기화하기 위한 배포 수단입니다.
 
 > [!TIP]
-> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 스킬 11종: `review-task` · `manage-work` · `ideation` · `create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `doc-review` · `create-narrative`.
+> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 사용자가 부르는 스킬은 둘입니다 — **`/start-vibe`**(작업 시작)와 **`/ideation`**(아이디어). 나머지 10종(`create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `doc-review` · `review-task` · `manage-work` · `create-narrative`)은 start-vibe가 골라 쓰며, 이름을 대고 직접 부를 수도 있습니다.
 
 ## 핵심 개념
 
-이 스킬셋은 네 가지 원칙 위에 설계되어 있습니다.
+이 스킬셋은 다섯 가지 원칙 위에 설계되어 있습니다.
 
 1. **역할 분리** — SSOT(기획)는 **기획자** 역할의 에이전트가 기획 관점 질문(목적·타겟·범위·플로우·정책)으로 만들고, 태스크(구현 계획)는 **엔지니어** 역할의 에이전트가 개발 관점 질문(데이터 모델·API·엣지·마이그레이션)으로 만듭니다. 기획 문서에 기술 결정이, 구현 단계에 기획 재논의가 섞이지 않습니다. 기획 쪽에 변경을 제안하는 `ideation`이 있듯, 개발 쪽에는 코드 품질을 대변해 리팩토링을 주장하는 **리뷰어**(`review-code`)가, 문서 쪽에는 의미를 보존하며 문장을 다듬는 **편집자**(`doc-review`)가 있습니다 — 채택은 언제나 사용자가 합니다.
 2. **사용자 수준 적응** — 최초 1회 캘리브레이션으로 `expert / mid / novice`를 정하면 모든 질문과 보고가 그 수준에 맞춰집니다. expert에게는 선택지를 용어로만 나열하고 세부·엣지까지 직접 묻고, mid에게는 선택지에 장단점을 한 줄씩 붙이고, novice에게는 기술명 대신 "무엇이 어떻게 되는지"를 물은 뒤 기술 결정은 에이전트가 내리고 한 줄로 보고합니다.
 3. **문서 먼저** — 단독 작업과 기획 공간은 진행 문서(`spec/STATE.md`)에 시작과 상태 변화를 기록합니다. 작업 묶음의 워커는 공유 실행 기록에 상태를 남깁니다. 세션을 이어 받아도 "다음 태스크 구현해줘", "SSOT 변경분 태스크로 쪼개줘"가 통하도록 현재 checkout의 맥락을 보존합니다. STATE 수정은 원자적 선점이 아니며, 다른 worktree의 변경은 자동으로 공유되지 않습니다.
 4. **정책 단위 문서** — SSOT의 한 결정은 **독립적으로 이해하고 검증할 수 있는 정책 하나**입니다. 조건이 많으면 줄을 합치지 않고 하위 항목이나 표로 폅니다(줄바꿈을 없애는 것은 간결화가 아닙니다). 대신 누가 언제 요청했는지, 과거 논의와 폐기된 방식의 상세, 미사여구는 남기지 않습니다 — 호환성·실패 조건·보안·과금·수치와 단위·부정 표현·필요한 근거는 반대로 반드시 남깁니다. 구조는 `lint`가 강제하고, 의미 품질은 `lint`가 **검토 후보**로만 표시한 뒤 `doc-review`가 사람과 함께 판단합니다.
+5. **결정할 사람이 있는지로 나뉘는 두 모드** — `/start-vibe`는 시작할 때 한 번 묻습니다. **함께**는 결정 지점마다 선택지를 모아 묻고, **맡김**은 그 뒤로 한 번도 묻지 않습니다 — 기획·기술 모두 추천안으로 진행하고, 받았어야 할 질문과 고른 답을 **결정함**(STATE `## inbox`)과 **보고서**(`spec/reports/`)에 남깁니다. 돌아오면 결정함부터 확인합니다. 진행은 작업 단위마다 원격에 push되어 다른 기기에서도 보입니다.
 
 ## 개발 흐름
 
 | 순서 | 스킬 | 역할 | 하는 일 | 산출물 |
 | --- | --- | --- | --- | --- |
+| 진입점 | `start-vibe` | 진행자 | 원격의 다른 기기 진행 확인 → 모드 질문 → 다음 스킬 선택 → 작업 단위마다 커밋·push. 맡김이면 결정함·보고서 | STATE `## active`·`## inbox`, `spec/reports/` |
 | 아이디어 | `ideation` | 기획 전문가 | 흐릿한 아이디어를 발산·수렴 루프로 함께 구체화, SSOT 전환용 도메인 분할까지 | `spec/ideation/<slug>.md` |
 | 0 | `create-architecture` | 엔지니어 | `spec/` 초기화 + 사용자 수준 캘리브레이션 + 아키텍처 인터뷰 | `spec/STATE.md` `spec/FORMAT.md` `spec/ssot/ARCH.md` |
 | 1 | `create-ssot` | 기획자 | 기획 인터뷰로 도메인 SSOT 작성 | `spec/ssot/<ID>.md` |
@@ -36,11 +38,12 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 
 ```text
 spec/
-├── STATE.md      # 관제탑: cfg(사용자 수준) · SSOT rev 현황 · 태스크 보드 · next · log
+├── STATE.md      # 관제탑: cfg(사용자 수준·push 브랜치) · 실행 중 세션(active) · 결정함(inbox) · SSOT rev 현황 · 태스크 보드 · next · log
 ├── FORMAT.md     # 모든 spec 문서의 압축 표기 규칙 (ID, 기호, 골격, 상태 규칙)
 ├── ideation/     # (선택) 아이디어 구체화 문서 — ready가 되면 create-ssot의 재료
 ├── ssot/         # 도메인별 SSOT — 결정([o]/[?]/[x])과 근거만, rev로 변경 추적
 ├── review/       # (선택) 코드 리뷰 finding — 채택([o])된 것이 ready가 되면 create-task의 재료
+├── reports/      # (선택) 맡김 세션 보고서 — 한 일·잠정 결정·주차한 일·검증 결과 (owner가 읽는 사용자 언어)
 └── tasks/        # 남은 태스크(todo·doing·blocked)만 — 완료기준·구현메모·결과, base 스탬프로 신선도 검증
     └── done/     # 완료된 태스크 아카이브 — STATE 표는 항상 남은 일만 보여줍니다
 ```
@@ -75,9 +78,40 @@ Claude Code나 Codex를 설치하려는 프로젝트에서 열고 다음 프롬�
 
 설치된 스킬이 발견되도록 Claude Code나 Codex 세션을 다시 시작합니다. 스킬은 요청 내용과 `SKILL.md`의 설명이 일치하면 에이전트가 자동으로 불러오며, 필요할 때 스킬 이름을 직접 지정할 수도 있습니다.
 
-### 3. 만들려는 것을 설명하기
+### 3. `/start-vibe`로 시작하기
 
-명령어를 외우기보다 평소처럼 원하는 결과를 설명하면 됩니다. 스킬 이름을 직접 불러도 됩니다.
+```text
+/start-vibe
+/start-vibe 태그 기능 만들자          ← 요청 문장이 있으면 STATE보다 먼저 해석합니다
+/start-vibe 맡김                     ← 인자로 답한 질문은 묻지 않습니다 (헤드리스 실행·오케스트레이터용)
+```
+
+1. 원격을 가져와 다른 기기에서 진행 중인 세션(STATE `## active`, `wip/<tag>` 스냅샷)을 확인합니다.
+2. **질문은 한 번에** 합니다: 모드(함께/맡김), 기획 거리와 구현 거리가 둘 다 있으면 무엇부터, 다른 기기가 진행 중이면 이어받을지, push할 브랜치가 정해지지 않았으면 어디로.
+3. 맡김이면 사용자가 떠나기 전에 점검합니다(`vibe preflight`: push 권한·lint·절전 방지·CI 접근, 작업 묶음이면 헤드리스 워커의 명령 실행 권한 실측). 정할 것이 있으면 이때 한 번 더 묻고, 그 뒤로는 묻지 않습니다.
+4. STATE를 보고 다음 일을 고릅니다 — 아무것도 없으면 `/ideation`으로 안내, 전환 안 된 아이디어가 있으면 기획(create-ssot → create-task), 태스크·변경분이 있으면 구현(implement-task). 태스크는 기본적으로 메인 세션에서 하나씩 진행하고, 독립 줄기가 충분히 클 때만 작업 묶음으로 병렬 처리합니다.
+5. 태스크 done·SSOT 개정·태스크 분해마다 커밋하고 cfg `push` 브랜치로 push합니다. 1시간 넘는 작업은 `wip/<tag>`로 스냅샷을 올립니다.
+
+| 모드 | 결정 | 사용자가 없을 때 |
+| --- | --- | --- |
+| 함께 | 결정 지점마다 선택지를 모아서 묻습니다 | — |
+| 맡김 | 추천안으로 진행하고 결정함·보고서에 남깁니다 | 기다리지 않습니다. 과금·데이터 삭제·개인정보·보안 정책, 되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일(force push, 브랜치 삭제, 배포·게시 등)만 주차하고 다른 일을 계속합니다 |
+
+"나 나갈게"라고 하면 맡김으로, 돌아와 말을 걸거나 `/start-vibe`를 다시 실행하면 결정함부터 보여 주는 함께로 바뀝니다. 결정함에서 승인하면 그 줄이 지워지고, 고치면 update-ssot로 확정합니다. SSOT에는 잠정 결정도 일반 결정으로만 들어가며, 잠정이라는 사실은 결정함이 결정 ID로 가리킵니다.
+
+보정·튜닝·밸런스처럼 돌려 보고 정하는 일은 **explore 태스크**(`explore:2h` + `exit:` 완료 조건)로 만들어 메인 세션에서 시간 제한 안에 끝냅니다 — 기준을 못 맞추면 측정값을 기록하고 마감합니다.
+
+### 아이디어는 `/ideation`
+
+```text
+/ideation 시즌 기록실에 다른 구단 비교 넣으면 좋겠다
+```
+
+생각날 때마다 아이디어를 받아 적습니다. 더 이야기하고 싶으면 발산·수렴 루프를 돌고, 쌓인 문서는 `/start-vibe`가 기획으로 가져갑니다.
+
+### 스킬을 직접 부르기
+
+원하는 결과를 설명하거나 스킬 이름을 대면 그 스킬을 씁니다. 모드를 정하지 않았으면 함께 모드입니다.
 
 ```text
 새 프로젝트야. spec을 초기화하고 아키텍처부터 잡아줘.   → create-architecture
@@ -180,6 +214,13 @@ npx haeram-spec-creator board --target ../my-worktree --json
 
 # 충돌한 로컬 파일을 패키지 버전으로 명시적으로 교체
 npx haeram-spec-creator install --force
+
+# start-vibe 세션 도구
+npx haeram-spec-creator vibe status --tag k3f9        # 다른 기기의 세션·남은 일·추천 경로
+npx haeram-spec-creator vibe push                     # 원격을 합치고(STATE는 섹션 단위) cfg push 브랜치로 push
+npx haeram-spec-creator vibe checkpoint --tag k3f9    # 작업 트리 스냅샷을 wip/k3f9로 (현재 브랜치는 그대로)
+npx haeram-spec-creator vibe check --heavy -- pnpm run test:e2e   # 같은 트리에서 통과한 검사는 생략, 무거운 검사는 하나씩
+npx haeram-spec-creator vibe preflight --probe 'pnpm run test' --allow-tool 'Bash(pnpm run *)'
 ```
 
 `--force`는 로컬 수정 내용을 덮어쓸 수 있으므로 충돌 내용을 확인한 뒤 사용하세요.
@@ -240,7 +281,11 @@ npx haeram-spec-creator work finish --work login --verify 'npm ci && npm run ci'
 npx haeram-spec-creator work cleanup --attempt "$ATTEMPT_ID" --json
 ```
 
-상태 흐름은 `doing → ready → reviewing → approved → integrated`입니다. 수정 요청은 `changes_requested → doing → ready`로 재검증·재리뷰합니다. `ready`는 워커 검증을 마친 리뷰 대기 상태이고, `integrated`가 되어야 태스크 파일이 `done/`으로 이동하고 후속 의존성이 열립니다. main 반영·PR·원격 push는 프로젝트의 기존 흐름을 따릅니다. CLI는 로컬 작업 브랜치까지만 통합하며 원격에 push하지 않습니다.
+상태 흐름은 `doing → ready → reviewing → approved → integrated`입니다. 수정 요청은 `changes_requested → doing → ready`로 재검증·재리뷰합니다. `ready`는 워커 검증을 마친 리뷰 대기 상태이고, `integrated`가 되어야 태스크 파일이 `done/`으로 이동하고 후속 의존성이 열립니다.
+
+`work start`(또는 `work configure`)에 `--push main`처럼 push 브랜치를 주면 **통합된 단위마다 그 브랜치로 바로 반영하고 push합니다** — 원격이 앞서 있으면 후보에서 먼저 합친 뒤 단위 검증을 돌립니다. 막힌 단위 하나가 끝난 단위들을 붙잡지 않고, 진행이 원격에 바로 보입니다. `--push`가 없으면 CLI는 로컬 작업 브랜치까지만 통합하고 main 반영·PR·push는 프로젝트의 기존 흐름을 따릅니다.
+
+리뷰는 기본적으로 위험한 단위만 받습니다(`--review risky`). 변경 300줄 초과(`--review-lines`), touches 밖 변경이나 touches 미선언, `--review-path`로 지정한 계약 경로 변경, 테스트 파일 변경 없음, 수정 요청·통합 실패 이력, 맡김에서 내린 잠정 결정이 걸린 태스크 — 하나라도 해당하면 리뷰, 아니면 정책 승인 후 통합 검증만 합니다. 전부 리뷰하려면 `--review all`. 같은 트리에서 이미 통과한 검사는 다시 돌리지 않고, 수정 후 재제출은 고친 커밋부터의 변경만 태스크 단계에 넘깁니다. explore 태스크와 그 후속은 묶음에 배정하지 않습니다.
 
 진행 중 기록과 상태 변화 이력은 `<git-common-dir>/haeram/v1/state.json`에 저장됩니다. 같은 clone의 worktree들이 공유하고 runtime 자체는 Git에 커밋하지 않습니다. 태스크 통합과 실행기 종료 시 `spec/work/<묶음>.json` 상세 기록 및 `STATE.md`의 작업 묶음 요약을 Git에 저장합니다. CLI는 원자적 예약으로 동일 태스크 및 동일 작업 공간의 이중 배정을 막습니다. 워커는 STATE·SSOT를 바꾸지 않으며, 기획 변경·채번은 하나의 기획 공간에서 진행합니다.
 
@@ -264,7 +309,7 @@ npx haeram-spec-creator work --help
 
 `context --json`은 Git/worktree와 현재 작업 모드를 보여 줍니다. 일반 `board`는 현재 checkout의 파일만 읽는 조회 명령이고, `work board`가 작업 묶음의 기준 커밋과 공유 실행 기록을 함께 보여 줍니다. 보드의 claimable은 조회 시점의 후보이며 선점 자체는 claim이 수행합니다. JSON의 `schemaVersion`은 1입니다.
 
-지원 범위는 같은 로컬 clone입니다. 다른 clone·호스트의 공유 선점, fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 기본 실행기 또는 command 어댑터로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 다른 clone에도 Git에 저장된 태스크·실행 이력 체크포인트가 남지만 현재 프로세스·선점 소유권과 명령 출력 로그는 전파되지 않습니다.
+작업 묶음의 원자적 선점은 같은 로컬 clone 안에서 동작합니다. 다른 기기(clone)와의 중복은 `/start-vibe`가 막습니다 — 세션은 STATE `## active` 행과 doing tag를 먼저 push해 선점하고, 다른 기기는 시작할 때 그 행과 `wip/<tag>` 스냅샷으로 진행 중인 일을 알아챕니다. fan-out 경쟁 구현은 포함하지 않습니다. 자동 실행은 아래의 기본 실행기 또는 command 어댑터로 연결합니다. 기획 공간의 수동 Git 작업은 CLI 예약을 따르지 않으므로 통합 중 같은 checkout에서 다른 변경을 실행하지 않아야 합니다. 기존 프로젝트의 `spec/FORMAT.md`·`STATE.md`는 install로 자동 이관되지 않으며, 작업 묶음은 기존 task 골격을 이용하는 선택 기능입니다. 다른 clone에도 Git에 저장된 태스크·실행 이력 체크포인트가 남지만 현재 프로세스·선점 소유권과 명령 출력 로그는 전파되지 않습니다.
 
 ### 줄기(lane)로 나누고 단계별로 검증하기
 
@@ -320,7 +365,7 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --json
 ```
 
-doctor와 dry-run은 모델을 호출하지 않습니다. provider를 생략하면 호환되는 Codex, Claude 순으로 선택하며, reviewer-provider를 생략하면 같은 도구를 사용합니다. 모델은 각 CLI 기본 설정을 사용하거나 `--model`·`--reviewer-model`로 지정합니다. CLI 로그인과 모델 접근 권한은 별도 준비가 필요합니다. 기본 어댑터의 워커는 파일을 편집하고, 호스트가 계약·변경 범위를 검사한 뒤 커밋·검증·제출합니다.
+doctor와 dry-run은 모델을 호출하지 않습니다. `--autopilot`이면 사람이 없다는 전제로 돕니다 — 기획 결정이 필요한 워커는 결정 요청을 남기고 다른 단위가 계속되며, 조정자 세션(`work next --coordinator --autopilot`)이 잠정 결정해 `work update --status doing --note`로 재개하면 실행기가 기획 브랜치를 합치고 **같은 세션**을 이어 실행합니다. 같은 lane의 다음 태스크와 수정도 세션을 이어 쓰고, 워커에게는 태스크·인용 결정·검증 명령을 묶은 브리핑(`work brief`)을 넘깁니다. timeout 전에는 작업 공간을 스냅샷하고 진행분을 커밋해 이어 가며, macOS에서는 실행 중 절전을 막습니다. 새 worktree에는 프로젝트의 권한 허용 목록이 적용되지 않으므로 워커가 실행할 명령은 `--allow-tool`로 묶음에 저장합니다. provider를 생략하면 호환되는 Codex, Claude 순으로 선택하며, reviewer-provider를 생략하면 같은 도구를 사용합니다. 모델은 각 CLI 기본 설정을 사용하거나 `--model`·`--reviewer-model`로 지정합니다. CLI 로그인과 모델 접근 권한은 별도 준비가 필요합니다. 기본 어댑터의 워커는 파일을 편집하고, 호스트가 계약·변경 범위를 검사한 뒤 커밋·검증·제출합니다.
 
 다른 실행기는 `--adapter <json-file>`로 연결할 수 있습니다. [실행 설정과 Orca 연결 방법](skills/manage-work/references/runner.md)에 설정 예·출력 규약·권한·복구 절차가 있습니다. Orca에서는 coordinator가 같은 선점·리뷰 CLI를 호출할 수 있습니다. doctor는 macOS Orca 앱에 포함된 CLI도 찾아 확인하지만 Orca pane/task/dispatch 자동 생성 어댑터는 아직 포함하지 않습니다.
 
