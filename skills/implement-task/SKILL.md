@@ -26,12 +26,16 @@ description: >-
 brief의 stale-base와 history(base 이후 chg 줄)가 델타다 — chg를 따로 읽지 않는다. 무관하면 base만 갱신, 영향 있으면 todo 복귀·log 후 create-task로 갱신한다. 완료 전 관련 rev만 다시 확인한다. 워커는 기획 공간에 인계하며 base를 임의로 바꾸지 않는다.
 
 ## 3. 구현
-태스크 완료기준과 인용 결정에 맞춰 구현한다. 코드는 `rg`로 위치를 찾고 필요한 줄 범위만 읽는다. 큰 파일·같은 SSOT 전체를 반복 출력하지 않는다. 명령 출력은 요약·tail만 보고 전체 로그는 파일 경로로 남긴다. 완료 태스크는 회귀 근거가 필요한 특정 파일만 조회한다.
+태스크 완료기준과 인용 결정에 맞춰 구현한다. 코드는 `rg`로 위치를 찾고 필요한 줄 범위만 읽는다. 큰 파일·같은 SSOT 전체를 반복 출력하지 않는다.
+- 새 함수·타입·상수를 쓰기 전에 `rg`로 같은 일을 하는 것이 이미 있는지 찾아 재사용한다 — 같은 판단(대상 여부, 좌표 변환, clamp 같은 유틸)을 파일마다 다시 정의하지 않는다. impl notes가 가리킨 공용 위치가 있으면 거기에 둔다.
+- 공용으로 옮겨야 할 helper를 찾으면 단독은 touches 밖의 공용 파일로 옮기고 result limits에 적는다. 묶음 워커는 touches 밖을 고치지 않고 있는 것을 재사용하거나 limits에 남긴다(다른 줄기와 충돌한다).
+- 조정 가능한 수치는 정의된 설정을 이름으로 읽는다. impl notes에 숫자로 적혀 있어도 같은 값의 설정이 있으면 그 설정을 쓰고, 새로 만든 설정은 실제로 읽히게 연결한다. 명령 출력은 요약·tail만 보고 전체 로그는 파일 경로로 남긴다. 완료 태스크는 회귀 근거가 필요한 특정 파일만 조회한다.
 기획 공백은 update-ssot, 기술 결정 누락은 create-task로 올린다. 맡김은 추천안+inbox decided, 금지 정책·되돌리기 어려운 일은 parked. 새 문맥은 바깥 반복기가 만든다. 단독 구현을 서브에이전트에 분할하지 않는다. 범위 밖 발견은 result limits/log 한 줄로 남긴다.
 explore는 시작 시각·timebox를 기록하고 측정값을 result에 보존한다. 시간이 다 되면 acceptance의 exit대로 끝낸다(함께는 한 번 확인, 맡김은 inbox decided).
 
 ## 4. 검증
 ① acceptance를 실제 확인해 `[v]` ② 추가·수정·영향받는 테스트 ③ typecheck·lint·format ④ spec lint ⑤ 묶음·CI는 아래 경계에 맡긴다.
+- 커밋 전에 자기 변경(`git diff $HAERAM_DIFF_BASE`)의 hunk만 한 번 훑는다: 다른 파일에 이미 있는 helper·타입의 재정의, 설정이 있는데 숫자로 쓴 값, 정의만 하고 읽히지 않는 설정·export, 동작과 다른 주석, 같은 식의 반복. 고칠 수 있으면 고치고 영향 테스트를 다시 돌린다. touches 밖이면 limits에 남긴다.
 - brief의 verify.guidance에 있는 조건부 UI·브라우저·저장소 검사도 적용한다. ARCH에 단계가 없어도 태스크 기본은 영향 테스트+빠른 검사다. 영향 범위를 한정할 수 없을 때만 해당 스위트로 넓히고 근거를 result verified에 남긴다. 빈 테스트 선택을 동작 검증으로 세지 않는다.
 - 검사는 `vibe check --tier task --diff-base <태스크 시작 SHA> --task T### -- <command>`로 실행한다. `HAERAM_TIER=task`, `HAERAM_DIFF_BASE`와 TASK(S)가 전달된다. 요약의 실패 테스트·마지막 줄만 보고, 필요할 때만 log 경로의 범위를 읽는다. 같은 트리·명령·범위의 성공은 재사용한다.
 - 전체 스위트는 **코드가 실리는 묶음 push 전 한 번**. 작업 묶음은 integrate --verify가 batch, 추가 로컬 최종 관문만 finish의 group-verify다. 워커는 이 검사를 중복 실행하지 않는다.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- create-task: shared helpers, types and frame conversions get one common location named in impl notes (and in that task's touches), later tasks point to them by name; tunable values are written as config names, with the number only in the task that defines the config. Applies to solo work too, not only work-group foundations. (Measured on haeram-soccor T206–T212: per-file touches and literal numbers in impl notes produced the same helpers in five files and configs nobody read.)
+- implement-task: search for an existing helper/type/config before writing a new one; solo work may move a helper to a shared file outside touches (noted in limits), workers reuse or note it; read tunables through their config. Before the commit, skim the task's own diff for redefinitions, literal numbers that have a config, unread configs/exports, stale comments and repeated expressions.
+- review-task: those same points are findings.
+
 ## 0.7.0
 
 - One brief assembler for `vibe brief` (standalone) and `work brief` (work groups, runner, `vibe loop`): the task; the current rules of each cited domain (STATE cfg `brief: domain`, the default) or only the cited decisions (`brief: cited`); what they require (`→!`) or delegate to (`→=`), transitively; decisions that reference a cited one; the global rules (cfg `always`, default every ARCH decision); the flow·constraints of each domain it draws from; chg lines after a stale base; the inbox lines about it. Whole blocks, never cut to a size.
