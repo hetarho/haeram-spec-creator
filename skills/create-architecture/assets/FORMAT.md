@@ -29,7 +29,9 @@
        `  - over limit ⇒ 429 + retry-after, never a silent drop`
 - [o] decided / [?] open / [x] rejected·not in force
 - change kind: + added / ✎ modified / - removed (e.g. `AUTH-2✎`)
-- reference: →AUTH-3
+- reference to a decision: `→!AUTH-3` requires (this rule cannot be applied without it) · `→=AUTH-3` canonical (the target owns the rule this line points to) · `→~AUTH-3` related (background, looked up on demand) · `→AUTH-3` unclassified. One marker covers a `/` list or a `–` range (`→!AUTH-3/5`, `→AUTH-3–6`); `→AUTH` is a whole domain; a bare `AUTH-3` counts as unclassified.
+  - write the kind when you write or revise the decision; never reclassify old references in bulk by guessing
+  - a brief pulls requires and canonical targets transitively, follows unclassified ones one hop from a cited or required decision and lists the rest, and lists related ones without their text
 - finding line: `- Fn [?|o|x] P1|P2|P3 <where>: <what>` + ` ← <why it matters>`; append ` →T###` once a task exists. P1 = correctness/security risk or blocks every change · P2 = slows every change · P3 = nice to have. A functional bug is a finding whose <what> starts with `bug:`
 - acceptance check: `- [ ]` open → `- [v]` done (never mark done with x — [x] means rejected in SSOT)
 - exploratory task: quote field `explore:<N>m|<N>h` is the timebox for work decided by running and measuring (calibrate·tune·balance). Its acceptance carries `- [ ] exit: <what gets recorded and why the task then counts as done when the timebox runs out>`
@@ -56,11 +58,15 @@
 
 ## Reading
 - Read by purpose: the rule in force → that SSOT's decisions·flow·constraints · what changed → that SSOT's chg, only the rev range you need · how something was built and verified → the one tasks/done/ file you are investigating.
-- Read one doc per call; read a large doc section by section. A read is complete only when the doc's last section is present (ssot → `## chg`, task → `## result`). If it is missing the output was truncated — re-read the missing range before judging anything.
+- Task context comes from `vibe brief <T###>` (a work-group worker gets the same brief from its runner): the task; the current rules of each cited domain (cfg brief `domain`) or only the cited decisions (`cited`); every decision they require or delegate to; decisions that reference a cited one; the global rules (cfg always); the flow·constraints of each domain it draws from; the chg lines after a stale base — all from one source, the working tree or one commit (`--ref`). Planning asks for `<ID>-n` (with who references it), `<ID>` or `<ID>@rev` (the chg lines after rev and the decisions they changed). Open an original only for what the brief reports missing, unfollowed or related that the work needs.
+- Completeness is per block: a decision block runs to the next top-level bullet or heading, and a doc without its last section (ssot `## chg`, task `## result`) has an unbounded last block. A brief is whole only when its last line `end … chars:N` is visible and it says complete:yes. A cut-off read or brief is re-read before anything is judged.
+- Read one doc per call; read a large doc section by section. Editing a doc (planning, doc-review) means reading that doc whole.
 - tasks/done/ is an archive of history: never read it in bulk, and never as a source of current rules (its st·base·ssot are as of completion). Open it to investigate a named task, the change behind a regression, or what was verified before. Listing filenames (numbering, dep satisfaction) is not reading them.
 - reports/ is history too: open only the reports whose inbox lines are still unresolved, newest first.
 
 ## State rules
+- STATE cfg `brief`: the scope of a task brief. `domain` (absent ⇒ domain): every current decision of each cited domain, whole. `cited`: only the cited decisions and what they reference — switch to it only when tasks cite every decision their implementation must obey.
+- STATE cfg `always`: the global rules every task brief carries — decision IDs or whole domains, space-separated (`ARCH-1 ARCH-4 SEC`); `-` = none; absent ⇒ every ARCH decision. Keep it to rules every task must follow (conventions, test policy, verify tiers) and decide membership when an ARCH decision is added.
 - STATE cfg `push`: the branch every finished unit is pushed to (`main`, `work/x`); `-` = commit only; `?` = not chosen yet (start-vibe asks once).
 - STATE active row `tag|host|mode|since|at|doing`: one row per running session. mode = pair|autopilot, since·at = ISO UTC, at = when this row was last pushed, doing = `T###` or `-`. The row is pushed before the session's first change and removed at its end. A session is stale when the newer of at and its `wip/<tag>` branch is older than 90 minutes.
 - STATE inbox: autopilot appends; a pair session shows it first. Confirm → delete the line and log it. Change → update-ssot, then delete the line. Inbox lines never move into ssot/.

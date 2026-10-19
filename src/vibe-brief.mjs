@@ -2,7 +2,8 @@ import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { inspectWorkspace, git } from './workspace.mjs'
 import { readTaskBoard } from './task-board.mjs'
-import { decisionBlocks, sections, tableRows } from './spec-format.mjs'
+import { sections, TASK_ID } from './spec-format.mjs'
+import { assembleBrief, specSource } from './spec-context.mjs'
 import { SkillPackageError } from './errors.mjs'
 
 // Extract only explicitly labelled tiers. Conditional prose remains guidance, never
@@ -35,8 +36,9 @@ export function verificationTiers(markdown) {
   return result
 }
 
-export async function readVerification(root) {
-  const arch = await readFile(path.join(root, 'spec/ssot/ARCH.md'), 'utf8').catch((error) => {
+// archText lets a brief read ARCH from the same source (commit or working tree) as its policy.
+export async function readVerification(root, archText) {
+  const arch = archText ?? await readFile(path.join(root, 'spec/ssot/ARCH.md'), 'utf8').catch((error) => {
     if (error.code === 'ENOENT') return ''
     throw error
   })
@@ -59,33 +61,35 @@ export async function readVerification(root) {
   return verify
 }
 
+// The standalone brief: the shared assembler over the working tree (or --ref <commit>), plus the
+// session fields a single task needs — the task-start diff base, freshness, verification tiers.
 export async function vibeBrief(options = {}) {
-  const workspace = await inspectWorkspace(options)
-  const root = workspace.git?.root ?? workspace.targetRoot
-  const board = await readTaskBoard({ targetRoot: root })
-  const task = board.tasks.find((task) => task.id === options.task)
-  if (!task) throw new SkillPackageError(`태스크를 찾을 수 없습니다: ${options.task}`)
-  const state = sections(await readFile(path.join(root, 'spec/STATE.md'), 'utf8'))
-  const revs = new Map(tableRows(state.get('ssot')).map(([id, rev]) => [id, Number(rev)]))
-  const decisions = []
-  for (const domain of new Set(task.ssot.map((id) => id.split('-')[0]))) {
-    const blocks = decisionBlocks(await readFile(path.join(root, `spec/ssot/${domain}.md`), 'utf8'))
-    for (const id of task.ssot.filter((id) => id.startsWith(`${domain}-`))) {
-      if (!blocks.has(id)) throw new SkillPackageError(`결정 블록이 없습니다: ${id}`)
-      decisions.push({ id, text: blocks.get(id) })
-    }
-  }
+  const roots = options.roots ?? (options.task ? [options.task] : [])
+  const source = await specSource({ targetRoot: options.targetRoot, ref: options.ref })
+  const brief = await assembleBrief({ source, roots, deep: Boolean(options.deep) })
+  const single = roots.length === 1 && TASK_ID.test(roots[0]) ? roots[0] : null
+  if (!single) return brief
+  const board = await readTaskBoard({ targetRoot: source.root, ...(source.commit ? { ref: source.commit } : {}) })
+  const task = board.tasks.find((entry) => entry.id === single) ?? null
+  if (!task && !brief.tasks.length) throw new SkillPackageError(`태스크를 찾을 수 없습니다: ${single}`)
+  const workspace = await inspectWorkspace({ targetRoot: source.root })
   const current = workspace.git?.head ?? null
-  const startFile = workspace.git ? path.join(workspace.git.gitDir, 'haeram-task-start.json') : null
-  const saved = startFile ? await readFile(startFile, 'utf8').then(JSON.parse).catch(() => null) : null
-  const diffBase = options.diffBase ?? process.env.HAERAM_DIFF_BASE ?? (saved?.task === task.id ? saved.diffBase : current)
-  if (diffBase && workspace.git) await git(root, ['rev-parse', '--verify', `${diffBase}^{commit}`])
-  if (startFile) await writeFile(startFile, JSON.stringify({ task: task.id, diffBase }))
-  return { schemaVersion: 1, taskId: task.id, commit: current, diffBase,
-    task: { ...task, content: await readFile(path.join(root, task.file), 'utf8') }, decisions,
-    freshness: task.base.map((entry) => { const [domain, rev] = entry.split('@'); return { domain, base: Number(rev), current: revs.get(domain) ?? null, stale: Number(rev) !== revs.get(domain) } }),
-    verify: await readVerification(root), touches: task.touches,
-    reading: 'This brief is the reading scope. Do not re-read STATE, FORMAT or ARCH in full. Retrieve only a missing section or decision ID.' }
+  let diffBase = null
+  if (source.kind === 'worktree') {
+    const startFile = path.join(workspace.git.gitDir, 'haeram-task-start.json')
+    const saved = await readFile(startFile, 'utf8').then(JSON.parse).catch(() => null)
+    diffBase = options.diffBase ?? process.env.HAERAM_DIFF_BASE ?? (saved?.task === single ? saved.diffBase : current)
+    if (diffBase) await git(source.root, ['rev-parse', '--verify', `${diffBase}^{commit}`])
+    await writeFile(startFile, JSON.stringify({ task: single, diffBase }))
+  }
+  const revs = new Map(brief.domains.map((domain) => [domain.id, domain.rev]))
+  const base = task?.base ?? []
+  return { schemaVersion: 1, taskId: single, commit: source.head, diffBase, task,
+    decisions: brief.decisions,
+    freshness: base.map((entry) => { const [domain, rev] = entry.split('@'); return { domain, base: Number(rev), current: revs.get(domain) ?? null, stale: Number(rev) !== revs.get(domain) } }),
+    verify: await readVerification(source.root, (await source.read('spec/ssot/ARCH.md')) ?? ''), touches: task?.touches ?? [],
+    reading: 'This brief is the reading scope: whole decision blocks the task cites or needs, global rules, flow·constraints and changes since a stale base. Do not re-read STATE, FORMAT or ARCH in full. Open an original only for what issues, unfollowed or related name and the task needs.',
+    ...brief }
 }
 
 export async function vibeFormat(options = {}) {

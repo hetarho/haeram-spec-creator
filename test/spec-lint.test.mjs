@@ -579,3 +579,25 @@ test('보고서는 파일명·제목·인용줄·골격을 검사한다', async 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('SSOT 참조: typed 참조가 깨지면 오류, 미분류 참조가 깨지면 경고, 정본 위임은 [o]를 가리키고 순환하지 않는다', async () => {
+  const arch = ARCH.replace('- ARCH-2 [?] deploy target', '- ARCH-2 [?] deploy target\n- ARCH-3 [o] node only →!ARCH-9 →ARCH-8 →=ARCH-2\n- ARCH-4 [o] lint follows →=ARCH-5\n- ARCH-5 [o] format follows →=ARCH-4 (→ARCH-1, →~ARCH-1, UTF-8)')
+  await withFixture({ arch }, async (root) => {
+    const { errors, warnings, reviewHints } = await lintSpec({ targetRoot: root })
+    assert.deepEqual(errors, ['ssot/ARCH.md ARCH-3: →!ARCH-9 — 결정 ARCH-9가 없습니다.'])
+    for (const pattern of [/ARCH-3: 참조 →ARCH-8의 대상 ARCH-8가 없습니다/, /ARCH-3: 정본 위임 →=ARCH-2의 대상이 \[o\]가 아닙니다/, /정본 위임이 순환합니다: ARCH-4 →= ARCH-5 →= ARCH-4/, /FORMAT.md에 참조 구분/]) {
+      assert.ok(warnings.some((warning) => pattern.test(warning)), `${pattern} not in ${warnings.join('\n')}`)
+    }
+    assert.ok(reviewHints.some((hint) => /미분류 참조\(→ID\) 2개/.test(hint)), reviewHints.join('\n'))
+  })
+})
+
+test('cfg always는 있는 결정·도메인만 가리키고, 빠지면 기본(ARCH 전체)으로 둔다', async () => {
+  await withFixture({ state: STATE.replace('- docs: en', '- docs: en\n- always: ARCH-1 ARCH-7 NOPE') }, async (root) => {
+    const { errors } = await lintSpec({ targetRoot: root })
+    assert.deepEqual(errors, ['cfg always의 ARCH-7가 없습니다 (결정 ID | 도메인 | -).', 'cfg always의 NOPE가 없습니다 (결정 ID | 도메인 | -).'])
+  })
+  await withFixture({ state: STATE.replace('- docs: en', '- docs: en\n- always: ARCH') }, async (root) => {
+    assert.deepEqual((await lintSpec({ targetRoot: root })).errors, [])
+  })
+})

@@ -1,7 +1,7 @@
 import { verificationTiers } from './vibe-brief.mjs'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue, EXIT_LINE, SESSION_TAG, ISO_UTC, INBOX_LINE, REPORT_FILE, REPORT_SECTIONS } from './spec-format.mjs'
+import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue, EXIT_LINE, SESSION_TAG, ISO_UTC, INBOX_LINE, REPORT_FILE, REPORT_SECTIONS, parseSsot, references, refId } from './spec-format.mjs'
 import { touchesErrors } from './work-policy.mjs'
 import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
@@ -121,6 +121,73 @@ function cfgValues(lines = []) {
   return map
 }
 
+// References between decisions (FORMAT reference notation). A typed reference (→! →= →~) is an
+// explicit contract, so a broken one is an error; an unclassified one predates the kinds, so a
+// broken one is a warning and the count of them is a review hint, never a reason to guess kinds.
+function referenceChecks({ ssotInfo, cfg, format, errors, warnings, reviewHints }) {
+  let unclassified = 0
+  let typed = 0
+  const canonical = new Map()
+  for (const [id, info] of ssotInfo) {
+    const check = (text, from) => {
+      for (const ref of references(text)) {
+        const target = refId(ref)
+        if (target === from) continue
+        const owner = ssotInfo.get(ref.domain)?.doc
+        const where = `ssot/${id}.md ${from}`
+        if (ref.kind === 'unclassified') {
+          if (!owner) continue // not a domain ID at all (UTF-8, SHA-256)
+          if (!ref.mention) unclassified += 1
+          if (ref.number !== null && !owner.decisions.has(target)) warnings.push(`${where}: 참조 ${ref.raw}의 대상 ${target}가 없습니다.`)
+          continue
+        }
+        typed += 1
+        if (!owner) { errors.push(`${where}: ${ref.raw} — 도메인 ${ref.domain}이 STATE ssot 표에 없습니다.`); continue }
+        if (ref.number === null) continue
+        const decision = owner.decisions.get(target)
+        if (!decision) { errors.push(`${where}: ${ref.raw} — 결정 ${target}가 없습니다.`); continue }
+        if (ref.kind === 'canonical' && decision.status !== 'decided') warnings.push(`${where}: 정본 위임 ${ref.raw}의 대상이 [o]가 아닙니다 — 지금 유효한 규칙을 가진 결정을 가리키세요.`)
+        if (ref.kind === 'requires' && decision.status === 'rejected') warnings.push(`${where}: 필수 의존 ${ref.raw}의 대상이 [x]입니다.`)
+        if (ref.kind === 'canonical' && /-\d+$/.test(from)) canonical.set(from, [...(canonical.get(from) ?? []), target])
+      }
+    }
+    if (!info.doc) continue
+    for (const block of info.doc.decisions.values()) check(block.text, block.id)
+    for (const name of ['flow', 'constraints']) if (info.doc.sections.get(name)?.text) check(info.doc.sections.get(name).text, name)
+  }
+  // A canonical owner that delegates back to its delegator owns nothing.
+  const reported = new Set()
+  for (const start of canonical.keys()) {
+    const trail = [start]
+    for (let next = canonical.get(start)?.[0]; next && canonical.has(next); next = canonical.get(next)[0]) {
+      if (trail.includes(next)) {
+        const cycle = trail.slice(trail.indexOf(next))
+        const key = [...cycle].sort().join(' ')
+        if (!reported.has(key)) { reported.add(key); warnings.push(`정본 위임이 순환합니다: ${[...cycle, next].join(' →= ')} — 규칙을 가진 쪽 하나만 정본으로 두세요.`) }
+        break
+      }
+      trail.push(next)
+    }
+  }
+  if (typed > 0 && format !== null && !format.includes('→!')) {
+    warnings.push('spec/FORMAT.md에 참조 구분(→! →= →~) 정의가 없습니다 — 패키지 FORMAT의 reference 줄을 옮기세요(README 기존 프로젝트 이관).')
+  }
+  if (unclassified > 0) {
+    reviewHints.push(`미분류 참조(→ID) ${unclassified}개 — brief는 이것을 1단계만 따라갑니다. 결정을 쓰거나 고칠 때 문장으로 판단해 필수(→!)·정본(→=)·관련(→~)으로 적고, 추측으로 일괄 바꾸지 않습니다.`)
+  }
+  // cfg brief: the scope of a task brief (absent ⇒ domain).
+  if (cfg.has('brief') && !['domain', 'cited'].includes(cfg.get('brief'))) errors.push(`cfg brief 값이 잘못됐습니다: ${cfg.get('brief') || '(빈 값)'} (domain|cited)`)
+  // cfg always: the global rules every task brief carries (absent ⇒ every ARCH decision).
+  if (cfg.has('always')) {
+    for (const token of splitRefs(cfg.get('always'))) {
+      const decision = token.match(/^([A-Z]{2,6})-(\d+)$/)
+      const found = decision ? ssotInfo.get(decision[1])?.doc?.decisions.get(token) : ssotInfo.has(token)
+      if (!found) errors.push(`cfg always의 ${token}가 없습니다 (결정 ID | 도메인 | -).`)
+      else if (decision && found.status === 'rejected') warnings.push(`cfg always의 ${token}가 [x]입니다 — 전역 규칙에서 빼세요.`)
+    }
+  }
+}
+
 export async function lintSpec({ targetRoot } = {}) {
   const specRoot = path.join(path.resolve(targetRoot ?? process.cwd()), 'spec')
   const errors = []
@@ -133,7 +200,8 @@ export async function lintSpec({ targetRoot } = {}) {
     errors.push('spec/STATE.md가 없습니다 — create-architecture로 부트스트랩하세요.')
     return { ok: false, errors, warnings, reviewHints, counts }
   }
-  if ((await readIfExists(path.join(specRoot, 'FORMAT.md'))) === null) {
+  const format = await readIfExists(path.join(specRoot, 'FORMAT.md'))
+  if (format === null) {
     errors.push('spec/FORMAT.md가 없습니다.')
   }
 
@@ -285,13 +353,14 @@ export async function lintSpec({ targetRoot } = {}) {
         )
       }
     }
-    ssotInfo.set(id, { rev, tasked, chgRevs, decisions })
+    ssotInfo.set(id, { rev, tasked, chgRevs, decisions, doc: parseSsot(content) })
   }
   for (const file of (await listIfExists(path.join(specRoot, 'ssot'))).filter((f) => f.endsWith('.md'))) {
     const id = file.replace(/\.md$/, '')
     if (!ssotIds.has(id)) errors.push(`ssot/${file}이 STATE ssot 표에 없습니다.`)
   }
   counts.ssot = ssotIds.size
+  referenceChecks({ ssotInfo, cfg, format, errors, warnings, reviewHints })
 
   // tasks
   const taskRows = tableRows(stateSections.get('tasks'))

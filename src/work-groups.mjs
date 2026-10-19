@@ -7,7 +7,8 @@ import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { inspectWorkspace, git } from './workspace.mjs'
 import { readTaskBoard } from './task-board.mjs'
-import { quoteLine, quoteFields, sections, splitRefs, TASK_ID, INBOX_LINE, decisionBlocks } from './spec-format.mjs'
+import { quoteLine, quoteFields, sections, splitRefs, TASK_ID, INBOX_LINE } from './spec-format.mjs'
+import { assembleBrief, commitSource } from './spec-context.mjs'
 import { runtimeRoot, readRuntime, transaction, readLock, unlockRuntime, canonicalDestination } from './work-runtime.mjs'
 import { SkillPackageError } from './errors.mjs'
 import { lintSpec } from './spec-lint.mjs'
@@ -336,8 +337,9 @@ async function assessRisk(context, group, attempt, current, targetCommit) {
 }
 
 // Everything a worker needs before its first edit, so it does not rediscover it by reading:
-// the unit's task files and the exact decision blocks they cite, as of the group branch,
-// plus the stored verification commands and any correction or coordinator note.
+// the unit's task files and the decision blocks they need (cfg brief scope, requires, referrers, global rules), as of the
+// fixed group-branch commit, plus the stored verification commands and any correction or
+// coordinator note. The first fields keep their pre-0.7 meaning; the rest come from assembleBrief.
 export async function workBrief(options) {
   const context = await repository(options)
   const state = await readRuntime(context.root)
@@ -348,22 +350,10 @@ export async function workBrief(options) {
 
 async function briefFor(context, group, attempt) {
   const commit = await head(context.cwd, `refs/heads/${group.branch}`)
-  const board = await readTaskBoard({ targetRoot: context.cwd, ref: commit })
-  const tasks = []
-  const cited = new Set()
-  for (const id of unitTasks(attempt)) {
-    const task = board.tasks.find((entry) => entry.id === id)
-    if (!task) continue
-    tasks.push({ id, current: id === attempt.taskId, file: task.file, content: await blob(context.cwd, commit, task.file) })
-    for (const ref of task.ssot) cited.add(ref)
-  }
-  const decisions = []
-  for (const domain of [...new Set([...cited].map((ref) => ref.split('-')[0]))]) {
-    const blocks = decisionBlocks((await blob(context.cwd, commit, `spec/ssot/${domain}.md`)) ?? '')
-    for (const ref of [...cited].filter((entry) => entry.startsWith(`${domain}-`))) if (blocks.has(ref)) decisions.push({ id: ref, text: blocks.get(ref) })
-  }
-  return { schemaVersion: 1, attempt: attempt.id, group: group.id, commit, taskId: attempt.taskId, tasks, decisions,
-    verify: { task: group.verify?.task ?? [], unit: group.verify?.unit ?? [] }, correction: attempt.correction ?? null, directive: attempt.directive ?? null }
+  const { schemaVersion, tasks, decisions, ...rest } = await assembleBrief({ source: commitSource(context.cwd, commit), roots: unitTasks(attempt) })
+  return { schemaVersion, attempt: attempt.id, group: group.id, commit, taskId: attempt.taskId,
+    tasks: tasks.map(({ id, file, content, sha256 }) => ({ id, current: id === attempt.taskId, file, content, sha256 })), decisions,
+    verify: { task: group.verify?.task ?? [], unit: group.verify?.unit ?? [] }, correction: attempt.correction ?? null, directive: attempt.directive ?? null, ...rest }
 }
 
 export async function inspectWork(options = {}) {

@@ -24,7 +24,7 @@ npx haeram-spec-creator work run --work feature --provider codex --reviewer-prov
 - 명령에는 `HAERAM_TIER`(task|unit|group), `HAERAM_DIFF_BASE`(태스크=이전 단계 커밋, 재제출=고친 대상 커밋, 단위=통합 전 상위 커밋, 묶음=묶음 시작 커밋), `HAERAM_TASK`·`HAERAM_TASKS`가 전달된다. 예: `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 호스트가 영향받는 테스트를 직접 실행한다. 빈 선택이 통과로 끝나지 않게 명령을 구성한다.
 
 ### lane
-lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 에이전트를 실행하고, 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 다음 태스크·수정 요청·답을 받은 결정 요청은 같은 세션을 이어서(resume) 실행한다 — 연속 4회까지, 그 뒤에는 새 세션. 세션 ID는 실행이 끝나기 전에 기록되므로(Claude는 `--session-id`로 미리 정하고, Codex는 첫 이벤트의 thread ID) timeout으로 끊긴 실행도 이어 갈 수 있다. 워커에게는 태스크 파일·인용한 결정 블록·검증 명령을 묶은 `brief`를 넘긴다(`work brief --attempt <id>`와 같은 내용) — STATE·FORMAT·ARCH 전체를 다시 읽지 않게 한다. 세션 루프의 세션은 lane 전체를 구현한 뒤 한 번 제출한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
+lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다. 실행기는 태스크 하나씩 에이전트를 실행하고, 제출이 다음 `taskId`를 돌려주면 같은 슬롯·공간에 이어서 배정한다. 다음 태스크·수정 요청·답을 받은 결정 요청은 같은 세션을 이어서(resume) 실행한다 — 연속 4회까지, 그 뒤에는 새 세션. 세션 ID는 실행이 끝나기 전에 기록되므로(Claude는 `--session-id`로 미리 정하고, Codex는 첫 이벤트의 thread ID) timeout으로 끊긴 실행도 이어 갈 수 있다. 워커에게는 태스크 파일, 결정 블록(인용 도메인의 현재 규칙 또는 cfg brief `cited`면 인용 결정만, 필수 의존·정본, 인용 결정을 가리키는 결정), 전역 규칙(cfg always), 관련 flow·constraints, stale base 이후 chg, 검증 명령을 묶은 `brief`를 넘긴다(`work brief --attempt <id>`와 같은 내용, 묶음 브랜치의 고정 커밋 기준) — STATE·FORMAT·ARCH 전체를 다시 읽지 않게 한다. 기본 어댑터는 brief를 JSON 대신 마크다운으로 프롬프트에 싣는다. 세션 루프의 세션은 lane 전체를 구현한 뒤 한 번 제출한다. 리뷰와 통합은 lane 전체에 한 번이다. stdin의 `tasks`는 단위 전체, `taskId`는 이번에 구현할 태스크다. worker/review 작업 공간과 통합 후보는 필요한 환경이 설치되지 않았을 수 있다. 작업자가 환경 준비를 할 수 있도록 지시하고 검증 명령에도 필요한 준비를 포함한다.
 
 `--provider auto`가 기본이며 호환되는 Codex, Claude 순으로 선택한다. Orca 설치 여부로 실행 방식을 바꾸지 않는다. reviewer-provider를 생략하면 worker와 같은 도구를 사용한다. `--model`·`--reviewer-model`을 생략하면 각 CLI의 설정을 사용한다. 같은 도구의 리뷰어는 명시한 worker 모델을 상속하고, 다른 도구의 리뷰어는 모델을 따로 지정하지 않으면 그 CLI 기본값을 사용한다. 임의로 모델을 추정하거나 설치·로그인하지 않는다.
 
@@ -80,7 +80,7 @@ stdin은 JSON 객체 한 줄이다:
 - `instruction`: 실행 역할과 완료 절차. command 어댑터의 worker는 commit까지, reviewer는 결과 JSON 반환까지 수행한다. 기본 어댑터에서는 worker 커밋도 호스트가 담당한다. submit/review-finish는 runner 소유이므로 중복 호출하지 않는다.
 - `verify`: 단위 통합 검증 명령 배열, `taskVerify`: 태스크 제출 때 호스트가 실행할 명령 배열(빈 배열 가능). `cliCommand`: 현재 패키지 CLI의 실행 파일과 절대 경로 인자 배열. 여기에 `boardCommand`를 이어 붙여 최신 상태를 조회한다.
 - `correction`: 수정 요청을 재배정할 때 이전 리뷰와 findings; 없으면 null.
-- `mode`: `autopilot`이면 아무도 질문에 답하지 않는다. `resume`: 이어 쓸 세션 ID(없으면 null), `sessionFile`: 새 세션 ID를 알게 되는 즉시 써 둘 파일. `directive`: 조정자 메모나 timeout 후 이어 가기 안내(`note`). `allowTools`: 워커가 묻지 않고 실행할 도구 규칙. `brief`: 태스크·결정 원문·검증 명령. `risk`: 리뷰어에게 넘기는 위험 이유.
+- `mode`: `autopilot`이면 아무도 질문에 답하지 않는다. `resume`: 이어 쓸 세션 ID(없으면 null), `sessionFile`: 새 세션 ID를 알게 되는 즉시 써 둘 파일. `directive`: 조정자 메모나 timeout 후 이어 가기 안내(`note`). `allowTools`: 워커가 묻지 않고 실행할 도구 규칙. `brief`: 태스크·결정 원문 블록(필수 의존·전역 규칙 포함)·flow·constraints·history·출처(경로·rev·sha256)·issues·검증 명령. `risk`: 리뷰어에게 넘기는 위험 이유.
 - `review`: 리뷰 배정 시 id, submissionId, commit, baseCommit, workspace, owner. 없으면 null.
 
 stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 보낸다. 실행 도구의 JSONL/마크다운 출력은 어댑터에서 아래 형식으로 변환한다. raw CLI 출력을 그대로 연결해 이 규약을 만족한다고 가정하지 않는다.

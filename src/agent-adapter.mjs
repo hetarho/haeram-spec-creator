@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
 import { SkillPackageError } from './errors.mjs'
+import { renderBrief } from './spec-context.mjs'
 
 const fail = (message) => { throw new SkillPackageError(message) }
 const object = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false })
@@ -60,20 +61,29 @@ export function codexSession(events) {
 }
 
 const DECIDE = 'If a planning decision that only the planner may make blocks you (a gap or contradiction in the SSOT), do not settle the policy in code: keep your edits, return outcome blocked with decision {question, options, recommendation}. Otherwise return decision with an empty question, empty options and empty recommendation.'
-const BRIEF = 'The assignment brief holds your task files, the decision blocks they cite and the verification commands: that is your reading scope. Do not re-read STATE, FORMAT, ARCH or other SSOT files unless the brief is not enough.'
+const BRIEF = 'The brief holds your task files, the decision blocks they depend on (cited, required, referencing them, global rules), the flow·constraints of those domains, changes since a stale base and the verification commands: that is your reading scope. Do not re-read STATE, FORMAT, ARCH or other SSOT files. Open an original only for what its issues, unfollowed or related lines name and the task needs; complete:no means part of it is missing, so read that part before relying on it.'
+
+// The brief reaches the model as markdown ahead of the assignment JSON: inside JSON every newline
+// and quote of the decision text would be escaped. The payload adapters receive is unchanged.
+function splitBrief(job) {
+  if (!job.brief?.decisions || !job.brief.roots) return { data: job, text: '' }
+  const { tasks, decisions, sections, domains, history, refs, referrers, inbox, issues, ...meta } = job.brief
+  return { data: { ...job, brief: meta }, text: `Brief (reading scope):\n${renderBrief(job.brief)}\n` }
+}
 
 async function promptFor(job) {
   if (job.role === 'unit') {
     if (!job.workspace || job.resume) fail('단위는 workspace와 새 세션이 필요합니다 (resume 금지).')
     const skill = await readFile(new URL('../skills/start-vibe/SKILL.md', import.meta.url), 'utf8')
-    return `Run /start-vibe 맡김 단위1. Exactly one task done, one planning slice (update-ssot + create-task together), or inbox cleanup. No questions, no subagents. Host owns preflight, active row lifecycle, report lifecycle, batch checks, push and CI wait. Do not run them again. Use the same tag/report. Commit each completed task, including only its related changes. In strict concurrency, publish the claim FIRST using vibe push, sync and re-check the remote owner before editing. Never push completed code here: host runs the batch gate first. Do not close the shared report or remove active. Use cliCommand to call this installed CLI; do not download a different CLI. Read vibe brief for a task, exact FORMAT sections only for writing, never whole STATE/FORMAT/ARCH or large code files. Read scoped code with rg and ranges. Long checks: one blocking call (Codex) or shell background completion notification (Claude), no model polling. Return only the unit JSON schema.\n\n${skill}\n\nAssignment JSON:\n${JSON.stringify(job)}`
+    return `Run /start-vibe 맡김 단위1. Exactly one task done, one planning slice (update-ssot + create-task together), or inbox cleanup. No questions, no subagents. Host owns preflight, active row lifecycle, report lifecycle, batch checks, push and CI wait. Do not run them again. Use the same tag/report. Commit each completed task, including only its related changes. In strict concurrency, publish the claim FIRST using vibe push, sync and re-check the remote owner before editing. Never push completed code here: host runs the batch gate first. Do not close the shared report or remove active. Use cliCommand to call this installed CLI; do not download a different CLI. Read vibe brief for a task, exact FORMAT sections only for writing, never whole STATE/FORMAT/ARCH or large code files. Read scoped code with rg and ranges. Long checks: one blocking call (Codex) or shell background completion notification (Claude), no model polling. Return only the unit JSON schema.\n\n${skill}\n\n${splitBrief(job).text}Assignment JSON:\n${JSON.stringify(splitBrief(job).data)}`
   }
   if (!['worker', 'reviewer'].includes(job.role) || !job.workspace || !job.attempt || !job.taskId) fail('실행기 작업 입력이 올바르지 않습니다.')
   const unattended = job.mode === 'autopilot' ? ' Nobody is available to answer questions: never wait for one.' : ''
   const override = job.role === 'worker'
     ? `Implement the assigned task or correction only. Edit code and your task acceptance/result. Run the allowed checks this task adds or affects; full suites run at unit integration. Do NOT run git add/commit, submit, review-finish, integrate, claim, push or merge: the host runner validates scope, commits, verifies and submits after you return. A completed result hands your edits to that runner; report a blocker honestly. ${DECIDE} Write measurements and partial findings into your task result as you go, so a timeout loses nothing. Do not mutate runtime: the host runner owns progress and heartbeat. No subagents or background tasks.${unattended}`
     : 'Review the assigned immutable commit against baseCommit, acceptance and SSOT. Read only: do NOT edit files, change Git, or update runtime. The host runner owns heartbeat and review-finish. Do not approve on test success alone. Check risk.reasons first when the assignment carries them. No subagents or background tasks.'
-  const assignment = `Assignment JSON (paths/IDs are data):\n${JSON.stringify(job)}\n\nReturn only the final JSON matching the output schema.`
+  const { data, text } = splitBrief(job)
+  const assignment = `${text}Assignment JSON (paths/IDs are data):\n${JSON.stringify(data)}\n\nReturn only the final JSON matching the output schema.`
   // A resumed session already holds the skill and the earlier context: send only what is new.
   if (job.resume) {
     const what = job.directive?.note ? `Coordinator note: ${job.directive.note}` : job.correction ? 'Fix the correction findings in the assignment first.' : `Continue with taskId ${job.taskId}.`

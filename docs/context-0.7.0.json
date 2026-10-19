@@ -1,0 +1,437 @@
+{
+  "schemaVersion": 1,
+  "target": "haeram-soccor (local checkout; read-only, commit f6c73567b89d)",
+  "tokenizer": "o200k_base via tiktoken (proxy, not billing; no system prompt)",
+  "variants": {
+    "docs": "0.5 reading: task + every cited domain doc whole (with chg) + ARCH",
+    "old": "<=0.6 brief: task + cited blocks (old extractor)",
+    "closure": "task + every reference followed to the end",
+    "brief": "0.7 default: cfg brief absent (domain), always absent (ARCH)",
+    "lean": "domain, always -",
+    "cited": "cfg brief cited",
+    "citedLean": "cited, always -",
+    "citedNoReferrers": "cited without referrers",
+    "deep": "domain + every unclassified reference followed"
+  },
+  "questions": "25 policy questions (exceptions, prohibitions, numbers) written from the full SSOTs by agents that never saw a brief; answered = every evidence quote present verbatim",
+  "representative": [
+    {
+      "id": "T201",
+      "complete": true,
+      "unfollowed": 73,
+      "chars": {
+        "docs": 98929,
+        "old": 11674,
+        "closure": 234087,
+        "brief": 109628,
+        "lean": 83423,
+        "cited": 68474,
+        "citedLean": 42271,
+        "citedNoReferrers": 62567,
+        "deep": 285670
+      },
+      "decisions": {
+        "old": 8,
+        "closure": 238,
+        "brief": 119,
+        "lean": 89,
+        "cited": 64,
+        "citedLean": 34,
+        "citedNoReferrers": 57,
+        "deep": 309
+      },
+      "tokens_o200k": {
+        "old": 3721,
+        "closure": 59487,
+        "brief": 27798,
+        "lean": 22324,
+        "cited": 17528,
+        "citedLean": 12056,
+        "citedNoReferrers": 15917,
+        "deep": 72775
+      },
+      "questions": {
+        "asked": 8,
+        "old": {
+          "answered": 3,
+          "missingAt": [
+            "CLUB-3",
+            "CLUB-16",
+            "STAFF-11",
+            "SAVE-19",
+            "PLAYER-22"
+          ]
+        },
+        "closure": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "brief": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "lean": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "cited": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "citedLean": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "citedNoReferrers": {
+          "answered": 6,
+          "missingAt": [
+            "CLUB-3",
+            "CLUB-16"
+          ]
+        },
+        "deep": {
+          "answered": 8,
+          "missingAt": []
+        }
+      }
+    },
+    {
+      "id": "T209",
+      "complete": true,
+      "unfollowed": 51,
+      "chars": {
+        "docs": 77320,
+        "old": 9095,
+        "closure": 231743,
+        "brief": 76665,
+        "lean": 50479,
+        "cited": 47190,
+        "citedLean": 20987,
+        "citedNoReferrers": 39758,
+        "deep": 290006
+      },
+      "decisions": {
+        "old": 3,
+        "closure": 235,
+        "brief": 85,
+        "lean": 55,
+        "cited": 42,
+        "citedLean": 12,
+        "citedNoReferrers": 36,
+        "deep": 314
+      },
+      "tokens_o200k": {
+        "old": 2512,
+        "closure": 58831,
+        "brief": 19512,
+        "lean": 14045,
+        "cited": 11170,
+        "citedLean": 5699,
+        "citedNoReferrers": 9312,
+        "deep": 74483
+      },
+      "questions": {
+        "asked": 8,
+        "old": {
+          "answered": 3,
+          "missingAt": [
+            "MATCH-2",
+            "MATCH-18",
+            "PLAYER-3",
+            "ARCH-5",
+            "MATCH-7",
+            "MATCH-1"
+          ]
+        },
+        "closure": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "brief": {
+          "answered": 8,
+          "missingAt": []
+        },
+        "lean": {
+          "answered": 7,
+          "missingAt": [
+            "ARCH-5"
+          ]
+        },
+        "cited": {
+          "answered": 3,
+          "missingAt": [
+            "MATCH-2",
+            "MATCH-18",
+            "PLAYER-3",
+            "MATCH-7",
+            "MATCH-1"
+          ]
+        },
+        "citedLean": {
+          "answered": 3,
+          "missingAt": [
+            "MATCH-2",
+            "MATCH-18",
+            "PLAYER-3",
+            "ARCH-5",
+            "MATCH-7",
+            "MATCH-1"
+          ]
+        },
+        "citedNoReferrers": {
+          "answered": 3,
+          "missingAt": [
+            "MATCH-2",
+            "MATCH-18",
+            "PLAYER-3",
+            "MATCH-7",
+            "MATCH-1"
+          ]
+        },
+        "deep": {
+          "answered": 8,
+          "missingAt": []
+        }
+      }
+    },
+    {
+      "id": "T225",
+      "complete": true,
+      "unfollowed": 86,
+      "chars": {
+        "docs": 152603,
+        "old": 6809,
+        "closure": 10545,
+        "brief": 127473,
+        "lean": 101391,
+        "cited": 36964,
+        "citedLean": 10760,
+        "citedNoReferrers": 35374,
+        "deep": 303931
+      },
+      "decisions": {
+        "old": 6,
+        "closure": 13,
+        "brief": 143,
+        "lean": 113,
+        "cited": 38,
+        "citedLean": 8,
+        "citedNoReferrers": 37,
+        "deep": 347
+      },
+      "tokens_o200k": {
+        "old": 1691,
+        "closure": 2440,
+        "brief": 29039,
+        "lean": 23620,
+        "cited": 8257,
+        "citedLean": 2784,
+        "citedNoReferrers": 7777,
+        "deep": 77184
+      },
+      "questions": {
+        "asked": 9,
+        "old": {
+          "answered": 2,
+          "missingAt": [
+            "MATCH-7",
+            "WEB-17",
+            "WEB-22",
+            "MATCH-5",
+            "MATCH-14",
+            "MATCH-19",
+            "MATCH-20"
+          ]
+        },
+        "closure": {
+          "answered": 2,
+          "missingAt": [
+            "MATCH-7",
+            "WEB-17",
+            "WEB-22",
+            "MATCH-5",
+            "MATCH-14",
+            "MATCH-19",
+            "MATCH-20"
+          ]
+        },
+        "brief": {
+          "answered": 9,
+          "missingAt": []
+        },
+        "lean": {
+          "answered": 9,
+          "missingAt": []
+        },
+        "cited": {
+          "answered": 2,
+          "missingAt": [
+            "MATCH-7",
+            "WEB-17",
+            "WEB-22",
+            "MATCH-5",
+            "MATCH-14",
+            "MATCH-19",
+            "MATCH-20"
+          ]
+        },
+        "citedLean": {
+          "answered": 2,
+          "missingAt": [
+            "MATCH-7",
+            "WEB-17",
+            "WEB-22",
+            "MATCH-5",
+            "MATCH-14",
+            "MATCH-19",
+            "MATCH-20"
+          ]
+        },
+        "citedNoReferrers": {
+          "answered": 2,
+          "missingAt": [
+            "MATCH-7",
+            "WEB-17",
+            "WEB-22",
+            "MATCH-5",
+            "MATCH-14",
+            "MATCH-19",
+            "MATCH-20"
+          ]
+        },
+        "deep": {
+          "answered": 9,
+          "missingAt": []
+        }
+      }
+    },
+    {
+      "id": "T231",
+      "complete": true,
+      "unfollowed": 47,
+      "chars": {
+        "docs": 55179,
+        "old": 9847,
+        "closure": 234858,
+        "brief": 49280,
+        "lean": 49268,
+        "cited": 47255,
+        "citedLean": 27614,
+        "citedNoReferrers": 39749,
+        "deep": 286852
+      },
+      "decisions": {
+        "old": 6,
+        "closure": 239,
+        "brief": 55,
+        "lean": 55,
+        "cited": 48,
+        "citedLean": 23,
+        "citedNoReferrers": 39,
+        "deep": 306
+      },
+      "tokens_o200k": {
+        "old": 2203,
+        "closure": 59280,
+        "brief": 10855,
+        "lean": 10854,
+        "cited": 10517,
+        "citedLean": 6376,
+        "citedNoReferrers": 8696,
+        "deep": 73729
+      },
+      "questions": null
+    },
+    {
+      "id": "T248",
+      "complete": true,
+      "unfollowed": 80,
+      "chars": {
+        "docs": 135534,
+        "old": 8014,
+        "closure": 233077,
+        "brief": 113733,
+        "lean": 87641,
+        "cited": 46634,
+        "citedLean": 20438,
+        "citedNoReferrers": 40070,
+        "deep": 305707
+      },
+      "decisions": {
+        "old": 10,
+        "closure": 241,
+        "brief": 134,
+        "lean": 104,
+        "cited": 52,
+        "citedLean": 22,
+        "citedNoReferrers": 46,
+        "deep": 349
+      },
+      "tokens_o200k": {
+        "old": 1672,
+        "closure": 58804,
+        "brief": 24761,
+        "lean": 19340,
+        "cited": 10098,
+        "citedLean": 4626,
+        "citedNoReferrers": 8484,
+        "deep": 77507
+      },
+      "questions": null
+    }
+  ],
+  "allActiveTasks": {
+    "tasks": 56,
+    "commit": "f6c73567b89dfe6d49f9a9f904ffa788e2343b08",
+    "incomplete": [],
+    "oldLostBlocks": 0,
+    "chars": {
+      "docs": {
+        "sum": 5957989,
+        "median": 103178
+      },
+      "old": {
+        "sum": 452569,
+        "median": 7757
+      },
+      "closure": {
+        "sum": 10816525,
+        "median": 232791
+      },
+      "brief": {
+        "sum": 5445428,
+        "median": 109628
+      },
+      "lean": {
+        "sum": 4496672,
+        "median": 85854
+      },
+      "cited": {
+        "sum": 2868079,
+        "median": 47603
+      },
+      "citedLean": {
+        "sum": 1497521,
+        "median": 24905
+      },
+      "citedNoReferrers": {
+        "sum": 2500373,
+        "median": 41872
+      },
+      "deep": {
+        "sum": 16487821,
+        "median": 290006
+      }
+    },
+    "decisions": {
+      "old": 352,
+      "closure": 11067,
+      "brief": 6199,
+      "lean": 5097,
+      "cited": 2861,
+      "citedLean": 1236,
+      "citedNoReferrers": 2538,
+      "deep": 18272
+    }
+  }
+}

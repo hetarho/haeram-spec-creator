@@ -2,6 +2,7 @@ import { vibeStatus, vibeSync, vibePush, vibeBeat, vibeCheckpoint, vibePreflight
 import { vibeLoop } from './vibe-loop.mjs'
 import { vibeCIWait } from './vibe-ci.mjs'
 import { vibeBrief, vibeFormat } from './vibe-brief.mjs'
+import { renderBrief } from './spec-context.mjs'
 import { SkillPackageError } from './errors.mjs'
 
 const HELP = `세션 도구 (start-vibe가 사용)
@@ -11,7 +12,9 @@ const HELP = `세션 도구 (start-vibe가 사용)
   vibe loop --tag <tag> --stop                  정지 파일 기록; 실행 중인 단위도 종료
   vibe ci wait [--commit HEAD] [--branch <branch>] [--repo owner/repo]
     [--diff-base <sha>] [--timeout-ms 3600000] [--no-run-ms 120000] [--poll-ms 15000]
-  vibe brief T### [--diff-base <task-start-sha>] 태스크·결정 블록·검증 단계·touches
+  vibe brief <T###|ID-n|ID|ID@rev ...> [--ref <commit>] [--deep] [--diff-base <task-start-sha>] [--json]
+                                                결정 원문 블록·필수 의존·전역 규칙·flow·constraints·stale base 이후 chg.
+                                                기본은 작업 트리(미커밋 포함), --ref는 그 커밋만. 마크다운이 기본이고 끝에 end 줄
   vibe format --section task|state|ssot|report|reading  FORMAT 발췌만
   vibe status [--tag <tag>] [--no-fetch]        원격의 다른 세션·남은 일·추천 경로(route)
   vibe sync                                     원격 push 브랜치를 HEAD에 반영 (STATE는 섹션 단위 병합)
@@ -24,17 +27,17 @@ const HELP = `세션 도구 (start-vibe가 사용)
   vibe awake [--hours <n>] | --stop             macOS caffeinate로 절전 방지
   vibe check [--tier task|batch] [--diff-base <task-start-sha>] [--task T###] [--timeout-ms <ms>] [--heavy] [--no-cache] -- <command>
                                                 같은 작업 트리에서 통과한 검사는 다시 돌리지 않음. --heavy는 무거운 검사를 하나씩
-공통: --target <path>, --remote <name>. 출력은 JSON. check는 요약·실패 이름·마지막 8줄·전체 로그 경로만 출력.
+공통: --target <path>, --remote <name>. 출력은 JSON(brief만 기본 마크다운). check는 요약·실패 이름·마지막 8줄·전체 로그 경로만 출력.
 `
 
 const allowed = {
   loop: ['tag', 'provider', 'model', 'max-units', 'max-hours', 'batch-size', 'permission-mode', 'allow-tool', 'verify', 'adapter', 'probe', 'probe-timeout-ms', 'timeout-ms', 'remote'],
-  ci: ['commit', 'branch', 'repo', 'diff-base', 'timeout-ms', 'no-run-ms', 'poll-ms', 'remote'], brief: ['task', 'diff-base'], format: ['section'],
+  ci: ['commit', 'branch', 'repo', 'diff-base', 'timeout-ms', 'no-run-ms', 'poll-ms', 'remote'], brief: ['task', 'diff-base', 'ref'], format: ['section'],
   status: ['tag', 'remote', 'section'], sync: ['remote'], push: ['remote', 'diff-base', 'timeout-ms', 'no-run-ms'], beat: ['tag', 'mode', 'doing', 'host'],
   checkpoint: ['tag', 'message', 'remote'], preflight: ['remote', 'probe', 'provider', 'allow-tool', 'probe-timeout-ms', 'probe-workspace', 'permission-mode'],
   awake: ['hours', 'remote'], check: ['tier', 'diff-base', 'task', 'timeout-ms'],
 }
-const flags = { loop: ['dry-run', 'detach', 'stop'], push: ['wait-ci'], status: ['no-fetch'], beat: ['end'], awake: ['stop'], check: ['heavy', 'no-cache'] }
+const flags = { loop: ['dry-run', 'detach', 'stop'], push: ['wait-ci'], status: ['no-fetch'], beat: ['end'], awake: ['stop'], check: ['heavy', 'no-cache'], brief: ['deep'] }
 const actions = { loop: vibeLoop, ci: vibeCIWait, brief: vibeBrief, format: vibeFormat, status: vibeStatus, sync: vibeSync, push: vibePush, beat: vibeBeat, checkpoint: vibeCheckpoint, preflight: vibePreflight, awake: vibeAwake }
 
 export async function runVibeCLI(args) {
@@ -49,12 +52,12 @@ export async function runVibeCLI(args) {
   if (!Object.hasOwn(allowed, action)) throw new SkillPackageError(`알 수 없는 vibe 명령: ${action}`)
   if (action === 'ci' && args.shift() !== 'wait') throw new SkillPackageError('vibe ci wait [옵션]')
   const options = {}
-  if (action === 'brief' && args[0] && !args[0].startsWith('--')) options.task = args.shift()
+  if (action === 'brief') while (args[0] && !args[0].startsWith('--')) (options.roots ??= []).push(args.shift())
   let command = null
   while (args.length) {
     const argument = args.shift()
     if (argument === '--') { command = args.splice(0).join(' '); break }
-    if (argument === '--json') continue
+    if (argument === '--json') { options.json = true; continue }
     const key = argument.slice(2)
     if (argument.startsWith('--') && flags[action]?.includes(key)) {
       options[key === 'no-fetch' ? 'fetch' : key === 'no-cache' ? 'noCache' : key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = key === 'no-fetch' ? false : true
@@ -75,8 +78,9 @@ export async function runVibeCLI(args) {
   }
   try {
     const result = await actions[action](options)
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-    if (result.ok === false) process.exitCode = 1
+    // A brief is read by a model: markdown with an end line unless JSON is asked for.
+    process.stdout.write(action === 'brief' && !options.json ? renderBrief(result) : `${JSON.stringify(result, null, 2)}\n`)
+    if (result.ok === false || (action === 'brief' && result.complete === false)) process.exitCode = 1
   } catch (error) {
     if (!(error instanceof SkillPackageError)) throw error
     process.stdout.write(`${JSON.stringify({ schemaVersion: 1, ok: false, error: error.message, details: error.details ?? [] }, null, 2)}\n`)

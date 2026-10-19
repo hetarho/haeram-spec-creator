@@ -64,13 +64,107 @@ export const REPORT_SECTIONS = ['done', 'decided', 'parked', 'checks', 'next']
 
 // Decision blocks by ID: the decision line plus its indented sub-lines and table rows.
 export function decisionBlocks(markdown) {
-  const blocks = new Map()
-  let current = null
-  for (const line of sections(markdown).get('decisions') ?? []) {
-    const head = line.match(/^-\s+([A-Z]{2,6}-\d+)\s+\[/)
-    if (head) { current = [line]; blocks.set(head[1], current) }
-    else if (current && /^\s+\S/.test(line)) current.push(line)
-    else if (line.trim() !== '') current = null
-  }
-  return new Map([...blocks].map(([id, lines]) => [id, lines.join('\n')]))
+  return new Map([...parseSsot(markdown).decisions].map(([id, block]) => [id, block.text]))
 }
+
+export const DECISION_HEAD = /^-\s+([A-Z]{2,6})-(\d+)\s+\[(o|x|\?)\]/
+export const DECISION_STATUS = { o: 'decided', '?': 'open', x: 'rejected' }
+
+function closedText(lines) {
+  const kept = [...lines]
+  while (kept.length && kept.at(-1).trim() === '') kept.pop()
+  while (kept.length && kept[0].trim() === '') kept.shift()
+  return kept.join('\n')
+}
+
+// One SSOT doc with line numbers. A decision block runs from its top-level bullet to the next
+// top-level bullet or heading, whatever the lines in between look like — an unindented table or
+// continuation line is still part of the decision, never silently cut off.
+export function parseSsot(markdown) {
+  const lines = markdown.split(/\r?\n/)
+  const doc = { title: null, rev: null, sections: new Map(), decisions: new Map(), duplicates: [], malformed: [], orphans: [] }
+  let section = null
+  let block = null
+  let lastDecision = null
+  const close = () => {
+    if (!block) return
+    block.text = closedText(block.lines)
+    delete block.lines
+    block = null
+  }
+  for (const [index, line] of lines.entries()) {
+    const number = index + 1
+    const heading = line.match(/^##\s+(.+?)\s*$/)
+    if (heading) {
+      close()
+      lastDecision = null
+      section = { name: heading[1], start: number, end: number, lines: [] }
+      if (!doc.sections.has(section.name)) doc.sections.set(section.name, section)
+      continue
+    }
+    if (!section) {
+      doc.title ??= line.match(/^#\s+(\S+)/)?.[1] ?? null
+      if (doc.rev === null && line.startsWith('> ')) doc.rev = Number(line.slice(2).match(/^r(\d+)\b/)?.[1] ?? NaN)
+      continue
+    }
+    section.lines.push(line)
+    if (line.trim() !== '') section.end = number
+    if (section.name !== 'decisions') continue
+    if (/^-\s+\S/.test(line)) {
+      close()
+      const head = line.match(DECISION_HEAD)
+      block = { id: head ? `${head[1]}-${head[2]}` : null, domain: head?.[1] ?? null, number: head ? Number(head[2]) : null,
+        status: head ? DECISION_STATUS[head[3]] : null, start: number, end: number, lines: [line] }
+      // A bullet that is not a decision line still sits under the decision before it.
+      if (!head) doc.malformed.push(Object.assign(block, { after: lastDecision }))
+      else if (doc.decisions.has(block.id)) doc.duplicates.push(block)
+      else doc.decisions.set(block.id, block)
+      if (head) lastDecision = block.id
+    } else if (block) {
+      block.lines.push(line)
+      if (line.trim() !== '') block.end = number
+    } else if (line.trim() !== '') doc.orphans.push(number)
+  }
+  close()
+  for (const entry of doc.sections.values()) {
+    entry.text = closedText(entry.lines)
+    delete entry.lines
+  }
+  if (Number.isNaN(doc.rev)) doc.rev = null
+  return doc
+}
+
+// References inside SSOT text. `→ID` is unclassified (every reference written before the kinds
+// existed); `→!` requires, `→=` canonical owner, `→~` related. A marker covers its `/` list and
+// `–`/`..` range, `→AUTH` is a whole domain, and a bare `AUTH-3` is a mention (treated as
+// unclassified). Code spans are not read. Callers drop targets whose domain does not exist.
+export const REF_KINDS = { '!': 'requires', '=': 'canonical', '~': 'related', '': 'unclassified' }
+const ARROW_REF = /→([!=~]?)([A-Z]{2,6})(?:-(\d+)((?:\/\d+)*)(?:(?:–|\.\.)(\d+))?)?(?![A-Za-z0-9])/g
+const MENTION_REF = /(?<![A-Za-z0-9_/@.–-])([A-Z]{2,6})-(\d+)((?:\/\d+)*)(?:(?:–|\.\.)(\d+))?(?![A-Za-z0-9])/g
+const RANGE_MAX = 200
+
+function targetNumbers(first, rest, last) {
+  const numbers = [Number(first), ...(rest ? rest.split('/').filter(Boolean).map(Number) : [])]
+  const end = last ? Number(last) : null
+  const from = numbers.at(-1)
+  if (end !== null && end > from && end - from <= RANGE_MAX) for (let number = from + 1; number <= end; number += 1) numbers.push(number)
+  return [...new Set(numbers)]
+}
+
+export function references(text) {
+  const found = []
+  const masked = text.replace(/`[^`\n]*`/g, (span) => ' '.repeat(span.length))
+  const arrows = masked.replace(ARROW_REF, (raw, marker, domain, first, rest, last) => {
+    const kind = REF_KINDS[marker]
+    if (first === undefined) found.push({ kind, domain, number: null, raw })
+    else for (const number of targetNumbers(first, rest, last)) found.push({ kind, domain, number, raw })
+    return ' '.repeat(raw.length)
+  })
+  for (const match of arrows.matchAll(MENTION_REF)) {
+    const [raw, domain, first, rest, last] = match
+    for (const number of targetNumbers(first, rest, last)) found.push({ kind: 'unclassified', domain, number, raw, mention: true })
+  }
+  return found
+}
+
+export const refId = (ref) => ref.number === null ? ref.domain : `${ref.domain}-${ref.number}`

@@ -166,6 +166,11 @@ test('work brief는 단위의 태스크, 인용한 결정 블록, 저장된 검�
   const brief = await workBrief({ ...setup, attempt: attempt.id })
   assert.equal(brief.tasks.length, 1)
   assert.match(brief.tasks[0].content, /## result/)
-  assert.deepEqual(brief.decisions, [{ id: 'ARCH-1', text: '- ARCH-1 [o] runtime: node\n  - only LTS releases' }])
+  // pre-0.7 fields keep their meaning; each decision now also says why and where it came from
+  assert.deepEqual(brief.decisions[0], { ...brief.decisions[0], id: 'ARCH-1', text: '- ARCH-1 [o] runtime: node\n  - only LTS releases' })
+  assert.deepEqual(brief.decisions.map((entry) => [entry.id, entry.via[0].kind]), [['ARCH-1', 'cited'], ['ARCH-2', 'always']])
   assert.deepEqual(brief.verify, { task: ['npm run lint'], unit: ['npm test'] })
+  assert.equal(brief.taskId, 'T001')
+  assert.deepEqual([brief.source.kind, brief.source.commit, brief.complete], ['commit', brief.commit, true])
+  assert.equal(brief.domains[0].path, 'spec/ssot/ARCH.md')
 })

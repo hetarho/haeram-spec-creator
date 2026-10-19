@@ -168,6 +168,48 @@ SSOT·계약·저장 형식·결정이 바뀌지 않는 작은 버그/문구/스
 
 변경 내역과 측정 한계는 [0.6.0 보고](docs/0.6.0.md)를 참고하세요.
 
+## 태스크별 결정 브리핑과 참조 구분 (0.7.0)
+
+구현 세션은 SSOT 문서·STATE·FORMAT을 통째로 읽는 대신 **그 태스크가 기대는 결정 블록**을 한 번에 받습니다. 단독은 `vibe brief`, 작업 묶음 워커는 `work brief`(실행기가 자동 전달), `vibe loop`의 단위가 같은 조립기를 씁니다.
+
+```bash
+npx haeram-spec-creator@0.7.0 vibe brief T201                 # 작업 트리 기준(미커밋 포함), 마크다운
+npx haeram-spec-creator@0.7.0 vibe brief T201 --ref HEAD      # 그 커밋만 기준
+npx haeram-spec-creator@0.7.0 vibe brief AUTH-4               # 결정 하나 + 필수 의존 + 이 결정을 가리키는 곳(referrers)
+npx haeram-spec-creator@0.7.0 vibe brief AUTH@3               # r3 이후 chg 줄과 바뀐 결정 (create-task 델타)
+npx haeram-spec-creator@0.7.0 vibe brief T201 --deep --json   # 미분류 참조까지 끝까지, JSON
+```
+
+| 들어가는 것 | 기준 |
+|---|---|
+| 태스크 본문 | 파일 전체 |
+| 결정 블록 | cfg `brief: domain`(기본) — 인용 도메인의 현재 결정 전체 / `brief: cited` — 인용 결정만. 여기에 `→!`(필수)·`→=`(정본) 대상을 끝까지, 인용 결정을 가리키는 결정(역참조), 미분류 `→`는 인용 블록에서 1단계. 조건·예외·표·하위 항목까지 원문 블록 그대로 |
+| 전역 규칙 | STATE cfg `always`(없으면 ARCH 전체) |
+| flow·constraints | 결정을 가져온 모든 도메인의 두 섹션 전체 |
+| 변경 이력 | 태스크 base가 뒤처진 도메인의 base 이후 chg 줄 |
+| 결정함 | 이 태스크·의존 결정을 가리키는 inbox 줄만 |
+
+빠지는 것은 이유와 함께 `## not included`에 남습니다 — `→~` 관련 참조, 1단계 너머의 미분류 참조(unfollowed), 규칙이 아닌 `[x]`. 없는 결정·잘린 문서·chg 공백·형식이 깨진 줄은 `## issues`에 오류로 나오고 `complete:no`가 됩니다(종료 코드 1). 크기 제한으로 잘라내는 일은 없습니다. 출력 마지막 줄 `end <roots> sha256:… chars:N`이 안 보이면 출력이 잘린 것입니다. 도메인마다 경로·rev·sha256, 결정마다 경로·줄 범위·sha256이 붙고(JSON), 작업 트리 기준이면 HEAD와 미커밋 spec 파일 목록을 따로 보여 줍니다. 작업 묶음은 묶음 브랜치의 고정 커밋만 씁니다.
+
+**참조 구분** (FORMAT Notation): `→!AUTH-3` 필수 의존 · `→=AUTH-3` 정본 위임 · `→~AUTH-3` 관련 설명 · `→AUTH-3` 미분류(기존 표기). 표시 하나가 `/` 목록과 `–` 범위(`→!AUTH-3/5`, `→AUTH-3–6`)에 적용되고, `→AUTH`는 도메인 전체, 화살표 없는 `AUTH-3`은 미분류로 칩니다. 기존 SSOT의 `→`는 그대로 미분류입니다 — 조용히 선택 참조로 바뀌지 않고, 추측으로 일괄 분류하지도 않습니다. 새로 쓰거나 고치는 결정에서 문장으로 판단해 표시합니다(create-ssot·update-ssot, 애매하지 않은 것만 doc-review). `lint`는 깨진 typed 참조를 오류, 깨진 미분류 참조와 정본 위임 순환을 경고, 미분류 참조 수를 검토 후보로 보고합니다.
+
+**범위와 전역 규칙** (STATE cfg): `- brief: domain|cited`, `- always: ARCH-1 ARCH-4 SEC`(결정 ID나 도메인, `-`는 없음). 둘 다 없으면 `domain`·ARCH 전체로, 0.6까지 구현 세션이 읽던 정보(인용 도메인의 결정·flow·constraints와 ARCH)를 chg·STATE·FORMAT 없이 받습니다. `cited`는 훨씬 작지만 **태스크가 지켜야 할 결정을 빠짐없이 인용할 때만** 안전합니다 — create-task가 그렇게 인용하도록 바뀌었고, 기존 태스크가 그렇지 않다면 `domain`으로 두세요.
+
+실제 프로젝트(SSOT 13개·약 39만 바이트, 활성 태스크 56개) 측정, 태스크당 문자 수 중앙값:
+
+| 0.5 문서 정독 | ≤0.6 brief(인용 블록만) | 참조 끝까지 | 0.7 기본(domain) | domain, always:- | cited | cited, always:- |
+|---:|---:|---:|---:|---:|---:|---:|
+| 103,178 | 7,757 | 232,791 | 109,628 | 85,854 | 47,603 | 24,905 |
+
+대표 3태스크에 SSOT 전체에서 뽑은 정책 질문 25개(예외·금지·수치)를 같은 근거 인용으로 확인하면 ≤0.6 brief 8개, `cited` 13개, `domain` 25개를 답합니다 — `cited`가 놓친 근거는 대부분 태스크가 인용하지도, 인용 결정이 참조하지도 않는 같은 도메인의 결정이었습니다. 자세한 내용은 [0.7.0 보고](docs/0.7.0.md).
+
+### 기존 프로젝트 적용
+1. `npx haeram-spec-creator@0.7.0 install --dry-run` → `install` → `check`. 설치는 `.claude/skills`·`.codex/skills`만 바꾸고 로컬에서 고친 스킬 파일은 기존처럼 충돌로 보고합니다(`--force` 없이는 덮어쓰지 않음). `spec/` 문서는 건드리지 않습니다.
+2. `npx haeram-spec-creator@0.7.0 lint` — 새 검사는 기존 문서에 오류를 만들지 않습니다(깨진 미분류 참조만 경고, 미분류 참조 수는 검토 후보).
+3. `spec/FORMAT.md`는 자동 이관되지 않습니다. 설치된 `.claude/skills/create-architecture/assets/FORMAT.md`와 비교해 Notation의 reference 줄(하위 줄 포함), Reading 섹션, State rules의 cfg `always` 줄만 옮기고 프로젝트가 고친 규칙은 그대로 둡니다. 옮기기 전까지 스킬은 typed 표시(`→!`·`→=`·`→~`)를 쓰지 않고 `→`만 씁니다 — lint는 FORMAT에 정의가 없는데 typed 표시가 쓰이면 경고합니다.
+4. STATE `## cfg`의 `- brief:`·`- always:` 줄은 선택입니다. 없으면 `domain`·ARCH 전체로 동작합니다. `cited`로 바꾸기 전에 열린 태스크의 인용줄이 지켜야 할 결정을 다 담는지 확인하세요.
+5. 기존 `→`의 분류는 결정을 고칠 때 하나씩 합니다. 분류 전에도 브리핑은 인용 결정에서 1단계를 따라가고 나머지를 unfollowed로 남깁니다.
+
 ## 직접 설치하기
 
 ### 기본: npx (권장 — Node 프로젝트가 아니어도 됩니다)
@@ -244,6 +286,7 @@ npx haeram-spec-creator install --force
 
 # start-vibe 세션 도구
 npx haeram-spec-creator vibe status --tag k3f9        # 다른 기기의 세션·남은 일·추천 경로
+npx haeram-spec-creator vibe brief T012                # 태스크가 기대는 결정 블록·전역 규칙·flow·constraints·stale base 이후 chg
 npx haeram-spec-creator vibe push                     # 원격을 합치고(STATE는 섹션 단위) cfg push 브랜치로 push
 npx haeram-spec-creator vibe checkpoint --tag k3f9    # 작업 트리 스냅샷을 wip/k3f9로 (현재 브랜치는 그대로)
 npx haeram-spec-creator vibe check --heavy -- pnpm run test:e2e   # 같은 트리에서 통과한 검사는 생략, 무거운 검사는 하나씩

@@ -15,15 +15,15 @@ description: >-
 2. **문서 먼저**: 쓰기 전 실행기 배정 또는 `work status --json`으로 확인한다(CLI가 없으면 checkout·사용자 배정 확인). 단독/기획은 STATE에 시작·상태 변화를 기록한다. 워커는 STATE·SSOT 대신 runtime과 자기 acceptance 체크·result만 쓴다. 리뷰는 읽기 전용이며 리뷰 runtime만 쓴다. 브랜치명은 소유권이 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. `vibe format --section task|state|ssot|report` 중 필요한 발췌만 보고 FORMAT 전체를 읽지 않는다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
-5. **읽기**: brief·status 요약을 먼저 쓰고 부족한 ID·섹션만 읽는다. STATE·FORMAT·ARCH·큰 코드 전체를 반복 읽지 않는다. tasks/done/은 특정 회귀·검증 근거만 선택 조회한다. 출력은 요약·tail, 전체 로그는 파일로 남긴다.
+5. **읽기**: brief·status 요약을 먼저 쓰고 부족한 ID·섹션만 읽는다. 결정은 `vibe brief <T###|ID-n|ID@rev>`로 원문 블록째 받는다 — 끝의 `end` 줄이 없거나 complete:no면 빠진 부분부터 다시 읽고, unfollowed·related는 필요한 것만 연다. 직접 읽은 결정은 다음 결정 줄·제목까지 본 블록만 근거로 쓴다. STATE·FORMAT·ARCH·큰 코드 전체를 반복 읽지 않는다. tasks/done/은 특정 회귀·검증 근거만 선택 조회한다. 출력은 요약·tail, 전체 로그는 파일로 남긴다.
 
 ## 1. 선택과 브리핑
 `work status --json`이 worker/group/reviewer이면 [작업 묶음 절차](references/work-group.md)만 추가로 읽는다. 단독이면 `vibe status --tag <tag> --json`에서 dep 충족 todo 또는 자기 doing 하나를 고른다. 다른 tag의 doing은 회수하지 않는다.
-`vibe brief T### --json` 또는 실행기의 brief가 읽기 범위다: 태스크·인용 결정 블록·base 신선도·ARCH 검증 단계·touches. 브리핑이 있으면 STATE·FORMAT·ARCH 전체를 다시 읽지 않는다. 부족한 결정 ID·섹션만 보충한다. 쓰는 표기는 `vibe format --section task` 발췌로 확인한다.
+`vibe brief T###` 또는 실행기의 brief가 읽기 범위다: 태스크, 인용 도메인의 현재 규칙(cfg brief `domain`, 기본) 또는 인용 결정만(`cited`), 필수 의존(`→!`)·정본(`→=`)·인용 결정을 가리키는 결정, 전역 규칙(cfg always), flow·constraints, base 이후 chg, ARCH 검증 단계. 브리핑이 있으면 STATE·FORMAT·ARCH 전체를 다시 읽지 않는다. issues부터 처리한다 — complete:no면 빠진 원문을 먼저 읽고, [x]는 규칙이 아니며 [?]에 기대는 구현은 기획 결정이 먼저다. unfollowed·related는 이 태스크에 필요한 것만 `vibe brief <ID>-n`으로 더 받는다. 쓰는 표기는 `vibe format --section task` 발췌로 확인한다.
 단독은 태스크 시작 HEAD를 `$HAERAM_DIFF_BASE`로 보존하고 모든 검사에 넘긴다(반복기는 이미 설정). 선점 st=`doing@YYMMDD.tag`를 태스크·STATE에 쓴다. solo는 첫 작업 커밋에 포함, strict는 start-vibe의 선점 커밋·push·원격 재확인을 먼저 한다. 같은 checkout에서 동시 쓰기를 하지 않는다.
 
 ## 2. 신선도
-brief.freshness에서 base와 현재 rev를 비교한다. 뒤처졌으면 해당 SSOT chg 델타만 조회한다. 무관하면 base만 갱신, 영향 있으면 todo 복귀·log 후 create-task로 갱신한다. 완료 전 관련 rev만 다시 확인한다. 워커는 기획 공간에 인계하며 base를 임의로 바꾸지 않는다.
+brief의 stale-base와 history(base 이후 chg 줄)가 델타다 — chg를 따로 읽지 않는다. 무관하면 base만 갱신, 영향 있으면 todo 복귀·log 후 create-task로 갱신한다. 완료 전 관련 rev만 다시 확인한다. 워커는 기획 공간에 인계하며 base를 임의로 바꾸지 않는다.
 
 ## 3. 구현
 태스크 완료기준과 인용 결정에 맞춰 구현한다. 코드는 `rg`로 위치를 찾고 필요한 줄 범위만 읽는다. 큰 파일·같은 SSOT 전체를 반복 출력하지 않는다. 명령 출력은 요약·tail만 보고 전체 로그는 파일 경로로 남긴다. 완료 태스크는 회귀 근거가 필요한 특정 파일만 조회한다.

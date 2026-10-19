@@ -13,7 +13,8 @@ const cli = fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.
 test('standalone brief contains exact cited blocks, freshness, touches and runnable tiers only', async (t) => {
   const { root, arch, initial } = await fixture(t)
   const brief = await vibeBrief({ targetRoot: root, task: 'T001' })
-  assert.deepEqual(brief.decisions.map((x) => x.id), ['ARCH-1'])
+  // the cited block first; ARCH-2 rides along as a global rule (no cfg always ⇒ every ARCH decision)
+  assert.deepEqual(brief.decisions.map((x) => [x.id, x.via[0].kind]), [['ARCH-1', 'cited'], ['ARCH-2', 'always']])
   assert.deepEqual(brief.touches, ['src/'])
   assert.deepEqual(brief.freshness, [{ domain: 'ARCH', base: 1, current: 1, stale: false }])
   assert.equal(brief.diffBase, initial)

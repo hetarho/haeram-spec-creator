@@ -18,7 +18,7 @@ description: >-
 2. **문서 먼저**: 쓰기 전 실행기 배정 또는 `work status --json`으로 확인한다(CLI가 없으면 checkout·사용자 배정 확인). 단독/기획은 STATE에 시작·상태 변화를 기록한다. 워커는 STATE·SSOT 대신 runtime과 자기 acceptance 체크·result만 쓴다. 리뷰는 읽기 전용이며 리뷰 runtime만 쓴다. 브랜치명은 소유권이 아니다.
 3. 산출 문서는 spec/FORMAT.md 표기를 따른다. `vibe format --section task|state|ssot|report` 중 필요한 발췌만 보고 FORMAT 전체를 읽지 않는다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
-5. **읽기**: brief·status 요약을 먼저 쓰고 부족한 ID·섹션만 읽는다. STATE·FORMAT·ARCH·큰 코드 전체를 반복 읽지 않는다. tasks/done/은 특정 회귀·검증 근거만 선택 조회한다. 출력은 요약·tail, 전체 로그는 파일로 남긴다.
+5. **읽기**: brief·status 요약을 먼저 쓰고 부족한 ID·섹션만 읽는다. 결정은 `vibe brief <T###|ID-n|ID@rev>`로 원문 블록째 받는다 — 끝의 `end` 줄이 없거나 complete:no면 빠진 부분부터 다시 읽고, unfollowed·related는 필요한 것만 연다. 직접 읽은 결정은 다음 결정 줄·제목까지 본 블록만 근거로 쓴다. STATE·FORMAT·ARCH·큰 코드 전체를 반복 읽지 않는다. tasks/done/은 특정 회귀·검증 근거만 선택 조회한다. 출력은 요약·tail, 전체 로그는 파일로 남긴다.
 
 작업 묶음의 워커에서 호출됐다면 이 스킬의 문서 쓰기 절차는 기획 공간으로 인계한다. `manage-work`가 반환한 group.path가 기획·채번·문서 정리 위치이며, 워커 checkout의 STATE·SSOT를 변경하지 않는다.
 
@@ -27,7 +27,7 @@ description: >-
 ## 1. 스코프와 델타
 입력은 두 종류다 — **SSOT 델타**(기획 변경)와 **리뷰 finding**(review-code가 뽑고 사용자가 채택한 리팩토링). 사용자가 지정하지 않으면 둘 다 처리한다.
 - SSOT: 사용자가 지정한 도메인, 없으면 STATE ssot에서 pending 있는(= tasked < rev) 전부. log에 `- YYMMDD create-task <IDs> start`.
-  - 델타 파악: 각 SSOT chg의 tasked+1..rev 줄 + 해당 결정 원문. tasked=0이면 도메인 전체가 신규. ARCH의 관련 결정도 읽는다(태스크가 따를 기준).
+  - 델타 파악: `vibe brief <ID>@<tasked>`가 chg의 tasked+1..rev 줄과 바뀐 결정 원문·필수 의존·flow·constraints를 준다. tasked=0이면 도메인 전체가 신규(`vibe brief <ID>`). ARCH의 관련 결정도 읽는다(태스크가 따를 기준). 태스크 인용줄 ssot에는 구현이 지켜야 하는 결정을 빠짐없이 넣는다 — 같은 도메인의 제약·예외·금지를 담은 결정도. 인용 결정이 `→!`·`→=`로 가리키는 결정은 brief가 함께 싣지만, 연결되지 않은 결정은 cfg brief가 `cited`일 때 brief에 들어가지 않는다.
   - 델타가 코드에 영향이 없으면(문구 정리, 컨벤션 서술 변경 등) 태스크 없이 소화한다: ssot `tasked=rev`·pending `-`, log에 `- YYMMDD <ID> rN..rM no-op (no code impact)` 1줄. 영향 여부가 확실하지 않으면 태스크를 만든다.
 - 리뷰: spec/review/에서 st:ready인 문서(사용자가 `review/<slug>`를 지정하면 그것만). 대상은 `→T###`가 아직 없는 [o] finding — [x]·[?]는 건드리지 않는다. log에 `- YYMMDD create-task review/<slug> start`.
 
