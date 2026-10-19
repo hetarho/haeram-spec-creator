@@ -8,7 +8,7 @@
 - level: ?  # expert|mid|novice — filled by create-architecture calibration
 - lang: ?   # user's language — interviews, confirmations, reports
 - docs: en  # doc language
-- push: ?   # branch every finished unit is pushed to, - = commit only — chosen at the first start-vibe
+- push: ?   # branch finished batches are pushed to, - = commit only — chosen at the first start-vibe
 
 ## ssot
 | id | rev | tasked | pending | [?] |

@@ -15,13 +15,13 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 2. **사용자 수준 적응** — 최초 1회 캘리브레이션으로 `expert / mid / novice`를 정하면 모든 질문과 보고가 그 수준에 맞춰집니다. expert에게는 선택지를 용어로만 나열하고 세부·엣지까지 직접 묻고, mid에게는 선택지에 장단점을 한 줄씩 붙이고, novice에게는 기술명 대신 "무엇이 어떻게 되는지"를 물은 뒤 기술 결정은 에이전트가 내리고 한 줄로 보고합니다.
 3. **문서 먼저** — 단독 작업과 기획 공간은 진행 문서(`spec/STATE.md`)에 시작과 상태 변화를 기록합니다. 작업 묶음의 워커는 공유 실행 기록에 상태를 남깁니다. 세션을 이어 받아도 "다음 태스크 구현해줘", "SSOT 변경분 태스크로 쪼개줘"가 통하도록 현재 checkout의 맥락을 보존합니다. STATE 수정은 원자적 선점이 아니며, 다른 worktree의 변경은 자동으로 공유되지 않습니다.
 4. **정책 단위 문서** — SSOT의 한 결정은 **독립적으로 이해하고 검증할 수 있는 정책 하나**입니다. 조건이 많으면 줄을 합치지 않고 하위 항목이나 표로 폅니다(줄바꿈을 없애는 것은 간결화가 아닙니다). 대신 누가 언제 요청했는지, 과거 논의와 폐기된 방식의 상세, 미사여구는 남기지 않습니다 — 호환성·실패 조건·보안·과금·수치와 단위·부정 표현·필요한 근거는 반대로 반드시 남깁니다. 구조는 `lint`가 강제하고, 의미 품질은 `lint`가 **검토 후보**로만 표시한 뒤 `doc-review`가 사람과 함께 판단합니다.
-5. **결정할 사람이 있는지로 나뉘는 두 모드** — `/start-vibe`는 시작할 때 한 번 묻습니다. **함께**는 결정 지점마다 선택지를 모아 묻고, **맡김**은 그 뒤로 한 번도 묻지 않습니다 — 기획·기술 모두 추천안으로 진행하고, 받았어야 할 질문과 고른 답을 **결정함**(STATE `## inbox`)과 **보고서**(`spec/reports/`)에 남깁니다. 돌아오면 결정함부터 확인합니다. 진행은 작업 단위마다 원격에 push되어 다른 기기에서도 보입니다.
+5. **결정할 사람이 있는지로 나뉘는 두 모드** — `/start-vibe`는 시작할 때 한 번 묻습니다. **함께**는 결정 지점마다 선택지를 모아 묻고, **맡김**은 그 뒤로 한 번도 묻지 않습니다 — 기획·기술 모두 추천안으로 진행하고, 받았어야 할 질문과 고른 답을 **결정함**(STATE `## inbox`)과 **보고서**(`spec/reports/`)에 남깁니다. 돌아오면 결정함부터 확인합니다. 혼자서는 태스크마다 커밋하고 묶음마다 push하며, 다른 세션이 보이면 선점부터 push해 다른 기기에서도 보입니다.
 
 ## 개발 흐름
 
 | 순서 | 스킬 | 역할 | 하는 일 | 산출물 |
 | --- | --- | --- | --- | --- |
-| 진입점 | `start-vibe` | 진행자 | 원격의 다른 기기 진행 확인 → 모드 질문 → 다음 스킬 선택 → 작업 단위마다 커밋·push. 맡김이면 결정함·보고서 | STATE `## active`·`## inbox`, `spec/reports/` |
+| 진입점 | `start-vibe` | 진행자 | 원격의 다른 기기 진행 확인 → 모드 질문 → 다음 스킬 선택 → 태스크별 커밋·묶음별 push. 맡김이면 결정함·보고서 | STATE `## active`·`## inbox`, `spec/reports/` |
 | 아이디어 | `ideation` | 기획 전문가 | 흐릿한 아이디어를 발산·수렴 루프로 함께 구체화, SSOT 전환용 도메인 분할까지 | `spec/ideation/<slug>.md` |
 | 0 | `create-architecture` | 엔지니어 | `spec/` 초기화 + 사용자 수준 캘리브레이션 + 아키텍처 인터뷰 | `spec/STATE.md` `spec/FORMAT.md` `spec/ssot/ARCH.md` |
 | 1 | `create-ssot` | 기획자 | 기획 인터뷰로 도메인 SSOT 작성 | `spec/ssot/<ID>.md` |
@@ -90,7 +90,7 @@ Claude Code나 Codex를 설치하려는 프로젝트에서 열고 다음 프롬�
 2. **질문은 한 번에** 합니다: 모드(함께/맡김), 기획 거리와 구현 거리가 둘 다 있으면 무엇부터, 다른 기기가 진행 중이면 이어받을지, push할 브랜치가 정해지지 않았으면 어디로.
 3. 맡김이면 사용자가 떠나기 전에 점검합니다(`vibe preflight`: push 권한·lint·절전 방지·CI 접근, 작업 묶음이면 헤드리스 워커의 명령 실행 권한 실측). 정할 것이 있으면 이때 한 번 더 묻고, 그 뒤로는 묻지 않습니다.
 4. STATE를 보고 다음 일을 고릅니다 — 아무것도 없으면 `/ideation`으로 안내, 전환 안 된 아이디어가 있으면 기획(create-ssot → create-task), 태스크·변경분이 있으면 구현(implement-task). 태스크는 기본적으로 메인 세션에서 하나씩 진행하고, 독립 줄기가 충분히 클 때만 작업 묶음으로 병렬 처리합니다.
-5. 태스크 done·SSOT 개정·태스크 분해마다 커밋하고 cfg `push` 브랜치로 push합니다. 1시간 넘는 작업은 `wip/<tag>`로 스냅샷을 올립니다.
+5. 태스크마다 커밋합니다. 혼자서는 기본 3개 또는 기획 조각 소진·세션 끝에 묶음 검증 후 cfg `push` 브랜치로 push합니다. 다른 세션이 보이면 선점 커밋·push와 원격 판정을 먼저 하고 단위마다 push합니다. 1시간 넘는 작업은 `wip/<tag>`로 스냅샷을 올립니다.
 
 | 모드 | 결정 | 사용자가 없을 때 |
 | --- | --- | --- |
@@ -140,6 +140,33 @@ SSOT 변경사항 태스크로 쪼개줘.                        → create-task
 ```text
 THEME SSOT가 너무 길어. 의미 바꾸지 말고 정리해줘.      → doc-review
 ```
+
+## 단위마다 새 세션으로 맡기기 (0.6.0)
+
+```bash
+npx haeram-spec-creator@0.6.0 vibe loop --tag k3f9 --provider claude --dry-run --json
+npx haeram-spec-creator@0.6.0 vibe loop --tag k3f9 --provider claude --max-units 30 --max-hours 8 --detach --json
+# Codex도 --provider codex로 동일하게 실행
+npx haeram-spec-creator@0.6.0 vibe loop --tag k3f9 --stop --json
+```
+
+반복기는 preflight·active·보고서를 한 번 준비한 뒤 태스크 하나, 기획 한 조각(SSOT+create-task), inbox 정리마다 새 세션을 시작합니다. `.git/haeram/v1/loops/<tag>/loop.json`에 상태·로그·세션 ID·정지 파일 경로를 남깁니다. `--detach`는 부모 터미널과 분리하고 macOS에서는 caffeinate를 사용합니다. STOP 표식은 재시작 전에 직접 지웁니다. headless 세션은 프로젝트 설정을 사용할 수 있는 메인 checkout에서 권한을 실측하며 기본은 Claude acceptEdits+허용 목록, Codex workspace-write입니다. 필요한 명령은 `--allow-tool 'Bash(pnpm *)'`처럼 추가합니다. 사용자가 명시한 `--permission-mode bypass`만 권한 우회를 켭니다.
+
+태스크 검증은 영향 테스트+빠른 검사, 전체 검증은 코드 묶음 push 전 한 번, CI는 push 뒤입니다. ARCH에 task/batch/CI 하위 줄이 있으면 그대로 사용하고, 조건부 브라우저 검사는 브리핑의 guidance로 남깁니다. legacy ARCH의 batch는 package.json의 verify/test 스크립트, 또는 명시적 `--verify '<command>'`를 사용합니다. 검증 없는 코드 push는 중단합니다.
+
+```bash
+npx haeram-spec-creator@0.6.0 vibe brief T200 --json
+npx haeram-spec-creator@0.6.0 vibe format --section task
+npx haeram-spec-creator@0.6.0 vibe check --tier task --diff-base <task-start-sha> -- pnpm run typecheck
+npx haeram-spec-creator@0.6.0 vibe ci wait --commit <pushed-sha> --diff-base <batch-start-sha> --json
+npx haeram-spec-creator@0.6.0 vibe push --wait-ci --diff-base <batch-start-sha>
+```
+
+CI 대기는 CLI 안에서 gh → 토큰 API → 공개 페이지 순으로 조회하며 인증 없는 API를 쓰지 않습니다. 기본 no-run 유예는 2분, 전체 제한은 1시간입니다. 공개 페이지로는 job/step 결론만 읽으며 인증이 필요한 원본 로그·아티팩트는 읽지 않습니다. 모델은 대기 중 호출되지 않습니다. 검사 출력은 짧은 JSON과 전체 로그 경로만 반환합니다.
+
+SSOT·계약·저장 형식·결정이 바뀌지 않는 작은 버그/문구/스타일(3파일·추가+삭제 100줄 이하)은 태스크 파일 없이 영향 검사·커밋 하나·STATE fix log로 처리합니다. 조건이 깨지면 정식 기획/태스크로 전환합니다. 함께 모드는 그대로 대화형이며 단위 완료 후 새 대화로 이어갈 수 있습니다.
+
+변경 내역과 측정 한계는 [0.6.0 보고](docs/0.6.0.md)를 참고하세요.
 
 ## 직접 설치하기
 

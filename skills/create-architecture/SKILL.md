@@ -12,11 +12,11 @@ description: >-
 **역할: 엔지니어.** 기술 결정을 이끈다. 단, 무엇을 만들지(기획)는 정하지 않는다 — 그건 create-ssot의 기획자 몫.
 
 ## 공통 규칙 (모든 spec 스킬)
-1. 먼저 spec/STATE.md를 읽는다. (이 스킬만 예외: 없으면 0단계 부트스트랩.)
-2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
-3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
+1. 먼저 `vibe status --json` 또는 실행기 brief로 필요한 STATE 요약만 본다. 없으면 0단계 부트스트랩.
+2. **문서 먼저**: 쓰기 전 실행기 배정 또는 `work status --json`으로 확인한다(CLI가 없으면 checkout·사용자 배정 확인). 단독/기획은 STATE에 시작·상태 변화를 기록한다. 워커는 STATE·SSOT 대신 runtime과 자기 acceptance 체크·result만 쓴다. 리뷰는 읽기 전용이며 리뷰 runtime만 쓴다. 브랜치명은 소유권이 아니다.
+3. 산출 문서는 spec/FORMAT.md 표기를 따른다. `vibe format --section task|state|ssot|report` 중 필요한 발췌만 보고 FORMAT 전체를 읽지 않는다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
-5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
+5. **읽기**: brief·status 요약을 먼저 쓰고 부족한 ID·섹션만 읽는다. STATE·FORMAT·ARCH·큰 코드 전체를 반복 읽지 않는다. tasks/done/은 특정 회귀·검증 근거만 선택 조회한다. 출력은 요약·tail, 전체 로그는 파일로 남긴다.
 
 ## 0. 부트스트랩 (spec/ 없을 때만)
 1. `spec/ssot/`, `spec/tasks/` 생성. 이 스킬 폴더의 `assets/STATE.md`, `assets/FORMAT.md`를 `spec/`으로 복사. log에 `- YYMMDD create-architecture start (spec init)` 1줄 — 이것이 공통 규칙 2의 시작 기록이다.
@@ -46,7 +46,7 @@ spec/이 이미 있으면 0단계 생략, ARCH 개정 모드 — 진행과 마�
 맡김 모드: 같은 질문에 추천안으로 답해 ARCH를 쓰고 inbox `decided`에 남긴다. 스택은 되돌리기 비싸므로 사용자가 inbox를 확인하기 전에는 스캐폴딩 태스크를 구현하지 않는다(inbox `parked`).
 
 ## 3. ssot/ARCH.md 작성
-create-ssot 스킬 폴더의 assets/ssot.md 템플릿을 `spec/ssot/ARCH.md`로 복사해 시작한다(r1). ARCH-n 결정으로: 스택 / 폴더 구조(트리 압축) / 데이터 저장·스키마 원칙 / 코드 컨벤션(네이밍·상태관리·에러 처리) / 테스트 정책 / verify 명령(test·lint·format) / CI/CD / 배포. 근거(←)는 트레이드오프가 있던 결정에만 붙인다. 폴더 구조·컨벤션처럼 항목이 여러 개인 결정은 한 줄로 늘이지 말고 결정 블록(2칸 들여쓴 하위 항목·표)으로 편다. verify 명령은 백틱 코드로, 설명을 섞지 않은 실행 가능한 형태 그대로 적는다. 테스트가 많아 전체 실행이 느린 프로젝트면 검증 단계를 결정 블록으로 나눈다: 태스크(그 태스크가 추가·수정한 테스트와 영향받는 기존 테스트 + 빠른 lint·타입 검사) / 단위 통합(전체 test — 작업 묶음의 `work integrate --verify`) / 묶음 완료·push 전(CI 재현 — `work finish --verify`). 단계를 나누지 않으면 모든 태스크가 verify 전체를 실행한다. 태스크 단계 명령은 CLI가 넘겨주는 `$HAERAM_DIFF_BASE`로 영향받는 테스트를 고를 수 있다(예 `git diff --name-only "$HAERAM_DIFF_BASE" HEAD`를 테스트 러너의 related/changed 옵션에 전달). **테스트는 기본 의무** — 빼려면 ARCH에 명시적 [o] 결정으로만 가능하고, 그 결정이 없으면 모든 태스크의 acceptance에 테스트가 요구된다.
+create-ssot 스킬 폴더의 assets/ssot.md 템플릿을 `spec/ssot/ARCH.md`로 복사해 시작한다(r1). ARCH-n 결정으로: 스택 / 폴더 구조(트리 압축) / 데이터 저장·스키마 원칙 / 코드 컨벤션(네이밍·상태관리·에러 처리) / 테스트 정책 / verify 명령(test·lint·format) / CI/CD / 배포. 근거(←)는 트레이드오프가 있던 결정에만 붙인다. 폴더 구조·컨벤션처럼 항목이 여러 개인 결정은 한 줄로 늘이지 말고 결정 블록(2칸 들여쓴 하위 항목·표)으로 편다. verify 명령은 백틱 코드로, 설명을 섞지 않은 실행 가능한 형태 그대로 적는다. 검증 단계는 모든 프로젝트에서 항상 결정한다: task(변경·영향 테스트+typecheck·lint·format) / batch(코드 push 전 전체 스위트 한 번) / CI(push 뒤 원격 검사). ARCH 개정 시 단계가 없으면 추가를 제안한다(맡김은 추천안+inbox). 결정 블록 하위 줄은 `  - task, before each done commit: ` 뒤 실행 명령 백틱 목록, `  - batch, before code push: ` 뒤 전체 명령 목록, `  - CI, after code push: ` 뒤 원격 관문 설명으로 쓴다. 조건부 UI·저장소·브라우저 검사는 별도 하위 줄에 조건과 spec 경로 선택법을 보존한다. `$HAERAM_DIFF_BASE`는 태스크 시작 SHA이며 단독·work 모두 CLI가 전달한다. 작업 묶음은 task→`--task-verify`, batch→`--verify`, CI가 최종 관문이면 `--group-verify`를 생략한다. 추가 로컬 최종 관문이 필요한 프로젝트만 group-verify를 정한다. 단계가 없어도 태스크에 전체 verify를 붙이지 않는다. **테스트는 기본 의무** — 빼려면 ARCH에 명시적 [o] 결정으로만 가능하고, 그 결정이 없으면 모든 태스크의 acceptance에 테스트가 요구된다.
 
 ## 4. 마감
 - STATE: ssot 행 `ARCH | 1 | 0 | all | <[?] 수>` (스캐폴딩도 태스크로 만들 것이므로 tasked=0), next = 기획 SSOT 없으면 `create-ssot`, 있으면 `create-task ARCH`, log 1줄.

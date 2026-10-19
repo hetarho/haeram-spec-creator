@@ -129,3 +129,19 @@ test('잠금 파일의 대상 밖 경로를 거부한다', async () => {
     (error) => error instanceof SkillPackageError && /안전하지 않거나/.test(error.message),
   )
 })
+
+test('0.5 → 0.6 lock upgrades both agents and new references without overwriting project FORMAT', async () => {
+  const fixture = await createFixture()
+  await mkdir(path.join(fixture.targetRoot, 'spec'), { recursive: true })
+  const format = path.join(fixture.targetRoot, 'spec/FORMAT.md')
+  await writeFile(format, '# Project notation\ncustom contracts\n')
+  await installSkills({ ...fixture, packageVersion: '0.5.0' })
+  await mkdir(path.join(fixture.skillRoot, 'references'))
+  await writeFile(path.join(fixture.skillRoot, 'references/tiers.md'), '# Conditional verification\n')
+  await installSkills({ ...fixture, packageVersion: '0.6.0' })
+  const lock = JSON.parse(await readFile(path.join(fixture.targetRoot, LOCK_FILE), 'utf8'))
+  assert.equal(lock.packageVersion, '0.6.0')
+  for (const agent of ['claude', 'codex']) assert.ok(lock.files[`.${agent}/skills/create-plan/references/tiers.md`])
+  assert.equal(await readFile(format, 'utf8'), '# Project notation\ncustom contracts\n')
+  assert.equal((await checkSkills(fixture)).ok, true)
+})

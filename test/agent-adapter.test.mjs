@@ -126,3 +126,21 @@ test('Codex 세션은 첫 이벤트의 thread_id로 기록하고 exec resume으�
   assert.deepEqual(args.slice(0, 7), ['-a', 'never', '--sandbox', 'workspace-write', 'exec', 'resume', 'thread-123'])
   assert.ok(args.includes('--output-schema'))
 })
+
+test('unit adapters use fresh sessions and permit bypass only when explicitly selected', async (t) => {
+  const fixture = await stub(t, 'claude', `const fs=require('node:fs');let text='';process.stdin.on('data',chunk=>text+=chunk);process.stdin.on('end',()=>{fs.writeFileSync('received.json',JSON.stringify({args:process.argv.slice(2),text,cwd:process.cwd()}));console.log(JSON.stringify({structured_output:{kind:'task',id:'T001',outcome:'completed',pushed:false,next:'implementation'}}));});`)
+  const first = await executeAgentAdapter({ provider: 'claude', job: { role: 'unit', workspace: fixture.root, tag: 't060', allowTools: ['Bash(npm test *)'] }, env: fixture.env, log: () => {} })
+  const second = await executeAgentAdapter({ provider: 'claude', job: { role: 'unit', workspace: fixture.root, tag: 't060' }, env: fixture.env, log: () => {} })
+  assert.notEqual(first.session, second.session)
+  const received = JSON.parse(await readFile(path.join(fixture.root, 'received.json'), 'utf8'))
+  assert.equal(received.cwd, fixture.root)
+  assert.equal(flag(received.args, '--permission-mode'), 'acceptEdits')
+  assert.ok(!received.args.includes('--resume'))
+  assert.match(received.text, /Exactly one task done/)
+  assert.match(received.text, /No questions, no subagents/)
+  const files = { schema: 'schema', result: 'result' }
+  assert.equal(flag(providerArguments('claude', 'unit', files, null, { permissionMode: 'bypass' }), '--permission-mode'), 'bypassPermissions')
+  assert.ok(providerArguments('codex', 'unit', files, null, { permissionMode: 'bypass' }).includes('--dangerously-bypass-approvals-and-sandbox'))
+  assert.ok(!providerArguments('codex', 'unit', files).some((arg) => arg.includes('bypass')))
+  await assert.rejects(executeAgentAdapter({ provider: 'claude', job: { role: 'unit', workspace: fixture.root, resume: first.session }, env: fixture.env }), /resume 금지/)
+})

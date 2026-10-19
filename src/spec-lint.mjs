@@ -1,3 +1,4 @@
+import { verificationTiers } from './vibe-brief.mjs'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue, EXIT_LINE, SESSION_TAG, ISO_UTC, INBOX_LINE, REPORT_FILE, REPORT_SECTIONS } from './spec-format.mjs'
@@ -178,6 +179,7 @@ export async function lintSpec({ targetRoot } = {}) {
       errors.push(`ssot/${id}.md 파일이 없습니다.`)
       continue
     }
+    if (id === 'ARCH' && /\b(verify|verification|test)\b|검증/i.test(content) && !verificationTiers(content).declared) reviewHints.push('ssot/ARCH.md: verify 명령은 있으나 task / batch·push 전 / CI 검증 단계가 없습니다. create-architecture 개정 후보입니다.')
     const quote = quoteLine(content)
     const revMatch = quote?.match(/^r(\d+)\b/)
     if (!revMatch) errors.push(`ssot/${id}.md 인용줄이 'rN | 목적' 형식이 아닙니다.`)

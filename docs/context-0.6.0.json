@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "baselineRef": "8d2020d87a5354e1485edbe5abe5c1aed13e362a",
+  "target": "haeram-soccor (local checkout; read-only snapshot)",
+  "systemPrompt": "not observable; excluded on both sides",
+  "recipe": "task session = start-vibe + implement-task + STATE/full FORMAT before; status/task FORMAT excerpt after. Task-specific brief and provider wrapper excluded. Token counts are tokenizer proxies, not Claude billing or observed maximum context.",
+  "measured": {
+    "start-vibe": {
+      "before": {
+        "chars": 5466,
+        "bytes": 9999,
+        "o200k_base": 2740,
+        "cl100k_base": 3840
+      },
+      "after": {
+        "chars": 4478,
+        "bytes": 7910,
+        "o200k_base": 2122,
+        "cl100k_base": 2965
+      }
+    },
+    "implement-task": {
+      "before": {
+        "chars": 8762,
+        "bytes": 16169,
+        "o200k_base": 4128,
+        "cl100k_base": 5909
+      },
+      "after": {
+        "chars": 3860,
+        "bytes": 6974,
+        "o200k_base": 1824,
+        "cl100k_base": 2583
+      }
+    },
+    "manage-work": {
+      "before": {
+        "chars": 9455,
+        "bytes": 17365,
+        "o200k_base": 4402,
+        "cl100k_base": 6320
+      },
+      "after": {
+        "chars": 1900,
+        "bytes": 3469,
+        "o200k_base": 886,
+        "cl100k_base": 1282
+      }
+    },
+    "state": {
+      "before": {
+        "chars": 22980,
+        "bytes": 23361,
+        "o200k_base": 5842,
+        "cl100k_base": 5971
+      },
+      "after": {
+        "chars": 8819,
+        "bytes": 8841,
+        "o200k_base": 2457,
+        "cl100k_base": 2453
+      }
+    },
+    "format": {
+      "before": {
+        "chars": 25629,
+        "bytes": 25829,
+        "o200k_base": 6105,
+        "cl100k_base": 6076
+      },
+      "after": {
+        "chars": 7610,
+        "bytes": 7698,
+        "o200k_base": 2076,
+        "cl100k_base": 2052
+      }
+    },
+    "taskSession": {
+      "before": {
+        "chars": 62837,
+        "bytes": 75358,
+        "o200k_base": 18815,
+        "cl100k_base": 21796
+      },
+      "after": {
+        "chars": 24767,
+        "bytes": 31423,
+        "o200k_base": 8479,
+        "cl100k_base": 10053
+      }
+    }
+  }
+}

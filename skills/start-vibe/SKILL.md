@@ -4,7 +4,7 @@ description: >-
   작업의 진입점. "/start-vibe, 작업 시작하자, 이어서 해줘, 남은 거 해줘, 나 나갈게 알아서 해줘" 일 때 사용.
   STATE와 원격을 읽어 다른 기기의 진행을 확인하고, 시작할 때 한 번에 묻는다(모드: 함께=내가 결정 / 맡김=묻지 않고
   추천안으로 진행). 그 뒤 기획(create-ssot·update-ssot·create-task)과 구현(implement-task)을 스스로 골라 진행하고
-  작업 단위마다 커밋·push한다. 맡김이면 결정함(STATE inbox)과 보고서를 남긴다. 아이디어를 쏟아내는 일은 ideation.
+  태스크별 커밋·묶음별 push한다. 맡김이면 결정함(STATE inbox)과 보고서를 남긴다. 아이디어를 쏟아내는 일은 ideation.
 ---
 
 # start-vibe — 작업 진행자
@@ -12,59 +12,48 @@ description: >-
 **역할: 진행자.** 다음에 할 일을 고르고(라우팅) 모드·push·진행 표시·결정함·보고서를 지킨다. 기획·기술 판단은 하지 않는다 — 고른 스킬이 자기 역할로 한다. 스킬 절차를 여기서 다시 쓰지 않는다.
 
 ## 공통 규칙 (모든 spec 스킬)
-1. 먼저 spec/STATE.md를 읽는다. (이 스킬 예외: 없으면 create-architecture로 보낸다.)
-2. **문서 먼저**: 쓰기 전에 `npx haeram-spec-creator work status --json`으로 배정을 확인한다(CLI가 없으면 Git checkout과 사용자의 배정을 확인). 단독/기획 공간에서는 STATE에 시작과 상태 변화를 기록한다. 작업 묶음의 워커는 STATE·SSOT를 수정하지 않고 실행 상태를 CLI로 기록하며, 자신의 태스크 acceptance·result만 갱신한다. 리뷰 공간에서는 코드·spec을 수정하지 않고 리뷰 runtime만 갱신한다. 브랜치명은 소유권 근거가 아니다.
-3. 산출 문서는 spec/FORMAT.md 표기를 따른다. 규칙에 없는 표기는 만들지 않는다.
+1. 먼저 `vibe status --json` 또는 실행기 brief로 필요한 STATE 요약만 본다. 없으면 create-architecture로 보낸다.
+2. **문서 먼저**: 쓰기 전 실행기 배정 또는 `work status --json`으로 확인한다(CLI가 없으면 checkout·사용자 배정 확인). 단독/기획은 STATE에 시작·상태 변화를 기록한다. 워커는 STATE·SSOT 대신 runtime과 자기 acceptance 체크·result만 쓴다. 리뷰는 읽기 전용이며 리뷰 runtime만 쓴다. 브랜치명은 소유권이 아니다.
+3. 산출 문서는 spec/FORMAT.md 표기를 따른다. `vibe format --section task|state|ssot|report` 중 필요한 발췌만 보고 FORMAT 전체를 읽지 않는다. 규칙에 없는 표기는 만들지 않는다.
 4. 질문·확인·보고는 cfg.lang 언어로, 상세도는 cfg.level대로. 산출 문서는 영어로 쓴다(FORMAT 언어 규칙). 선택지형 질문 도구(AskUserQuestion 등)가 있으면 사용. 맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.
-5. **읽기**(FORMAT Reading): 한 번에 한 문서씩, 큰 문서는 섹션 단위로 읽는다. 마지막 섹션(ssot=`## chg`, task=`## result`)이 안 보이면 출력이 잘린 것이다 — 누락 범위를 다시 읽고 나서 판단한다. tasks/done/은 역사 기록이라 일괄로 읽지 않고, 특정 태스크·회귀 원인·이전 검증을 찾을 때만 연다.
+5. **읽기**: brief·status 요약을 먼저 쓰고 부족한 ID·섹션만 읽는다. STATE·FORMAT·ARCH·큰 코드 전체를 반복 읽지 않는다. tasks/done/은 특정 회귀·검증 근거만 선택 조회한다. 출력은 요약·tail, 전체 로그는 파일로 남긴다.
 
-아래 `vibe ...`·`work ...`는 `npx haeram-spec-creator vibe|work ...`의 축약이다.
+CLI는 `npx haeram-spec-creator` 뒤에 붙인다. 실행기의 cliCommand가 있으면 그 경로를 사용한다.
 
-## 1. 시작 — 질문은 여기서 한 번에
-- 세션 tag(영숫자 4자, 예 `k3f9`)를 정해 끝까지 쓴다. `vibe status --tag <tag> --json`이 fetch 후 원격의 다른 세션(active 행·doing·`wip/<tag>` 최근 시각), 로컬과 원격의 차이, 결정함, 기획 거리·구현 거리, 추천 경로(`route`)를 돌려준다. 원격이 앞서 있고 작업 트리가 깨끗하면 `vibe sync`.
-- 선택지형 질문 **한 번**에 필요한 것만 묶는다(사용자는 지금 앞에 있다):
-  ① 항상: "지금부터 작업을 시작합니다. 어떤 모드로 할까요?" — **함께**(결정할 때마다 모아서 묻는다) / **맡김**(묻지 않고 추천안대로 끝까지, 결정은 결정함·보고서에)
-  ② `route:choose`(기획 거리와 구현 거리가 둘 다)일 때: 무엇부터 할지
-  ③ 다른 기기의 살아 있는 세션이 보일 때: 이어받기(그 태스크를 넘겨받고 `wip/<tag>`의 변경을 가져온다) / 겹치지 않는 일만
-  ④ cfg push가 `?`이거나 없을 때: push할 브랜치(`main` / 작업 브랜치 / 커밋만 `-`) — 답을 cfg에 쓴다
-  인자가 이미 답한 것(`/start-vibe 맡김`, `/start-vibe 함께 태그 기능`)은 묻지 않는다. 선택지형 질문 도구가 없으면 같은 질문을 텍스트로 하고 이 턴을 끝낸다 — 답할 사람이 없다고 스스로 판단해 모드를 정하지 않는다. 헤드리스 실행·오케스트레이터는 인자로 모드를 준다.
-- `vibe beat --tag <tag> --mode pair|autopilot`로 active 행을 쓰고 커밋·`vibe push` — 다른 기기가 이 세션을 본다.
-- **맡김**: `vibe preflight --json`(push 권한·검증 명령·절전 방지·CI 인증). 사람이 정해야 할 실패가 있으면 떠나기 전에 질문 한 번으로 해결한다 — 이것이 마지막 질문이다. 통과하면 `vibe awake`, 이 스킬의 assets/report.md를 `spec/reports/<YYMMDD>-<tag>.md`로 복사해 채우기 시작한다(FORMAT report).
-- **함께**: inbox가 있으면 먼저 보여 주고 한 번에 확인받는다. 승인 → 줄 삭제·log 1줄, 수정 → update-ssot 후 줄 삭제. 열린 보고서는 읽고 `to:`를 채워 닫는다.
+## 1. 시작·단위1
+`vibe status --tag <tag> --json`으로 cfg·active·inbox 수·next·남은 일만 본다. 원격 오류면 선점하지 않는다. 앞선 원격은 깨끗한 트리에서 sync한다. 함께(pair)와 실행기 밖 초기화는 필요할 때만 [세션 절차](references/session.md)를 읽는다.
+장기 맡김은 `vibe loop --tag <tag> --provider claude|codex --json`: 바깥 CLI가 단위마다 새 세션을 띄운다. 이 대화 안에서 남은 일을 끝까지 반복하지 않는다.
+`/start-vibe 맡김 단위1` 또는 `HAERAM_VIBE_UNIT=1`이면 시작 질문 없이 정확히 **태스크 1개 done / 기획 한 조각 / inbox 정리 / 작은 수정** 중 하나만 끝낸다. 기획 조각은 update-ssot(필요하면 create-ssot)+create-task를 같은 세션에서 끝내고 읽은 결정을 재사용한다. 그 뒤 구현으로 넘어가지 않는다. 구현을 부하 에이전트에 분할하지 않는다.
+hostManaged 실행기에서는 초기화·active·보고서 생성/종료·묶음 검증·완료 push·CI를 호스트에 맡긴다. 같은 tag·보고서를 잇고 재초기화하지 않는다. 기본 권한은 acceptEdits+allow 목록, 사용자가 명시한 `--permission-mode bypass`만 우회한다. 메인 checkout의 프로젝트 settings와 실제 실행 권한은 시작 probe로 확인한다.
 
 ## 2. 라우팅
-인자(요청 문장)가 있으면 STATE보다 먼저 해석한다. 스킬 이름을 대면 그 스킬을 쓴다.
+인자를 먼저 해석하고 없으면 route·dep을 따른다.
 
 | 상황 | 다음 |
 |---|---|
-| spec/ 없음 | create-architecture. 맡김: 추천 스택으로 ARCH 초안을 쓰고 결정을 inbox에, 스캐폴딩 구현은 주차(스택은 되돌리기 비싸다) |
-| 막연한 아이디어 | ideation. 맡김: 아이디어를 ideation 문서에 받아 적기만 하고 구체화 루프는 하지 않는다 |
-| 명확한 새 기능 / 기존 기획 변경 / 버그 | create-ssot / update-ssot / create-task(수정 태스크 1개) → 이어서 구현 |
-| 인자 없음, 기획·구현 거리 둘 다 없음 | "/ideation으로 아이디어부터 내 주세요"라고 안내하고 마감 |
-| 기획 거리: 전환 안 된 ideation(open·ready) | create-ssot(도메인마다) → create-task. open 문서는 이때 ready로 수렴시키고 공백은 인터뷰로 채운다 |
-| 구현 거리: pending(rev>tasked)·채택된 review | create-task → implement-task |
-| 구현 거리: todo 태스크 | implement-task를 dep 순서로 하나씩, 메인 세션에서 단독으로 |
-| 태스크 5개 완료마다·todo 소진 | review-code 제안(맡김: inbox `suggest`). lint 검토 후보가 쌓이면 doc-review 제안 |
+| spec 없음 | create-architecture 초안, 스캐폴딩 parked |
+| 작은 버그·문구·스타일 수정 | 아래 경량 경로 |
+| 새 기능·기획 변경 | create-ssot/update-ssot → create-task 한 조각 |
+| pending·채택 review | create-task 한 조각 |
+| 전환 전 ideation | 도메인 하나 create-ssot → create-task |
+| dep 충족 todo·자기 doing | vibe brief T### → implement-task 1개 |
+| inbox 정리 요청 | status --section inbox로 해당 항목만 반영·log |
+| 일 없음·parked만 남음 | 마감; 맡김에서 새 아이디어를 만들지 않는다 |
 
-- **작업 묶음은 예외적으로만** 쓴다: 독립 단위(lane·lane 없는 태스크) 2개 이상, 단위마다 태스크 3개 이상, touches가 서로 겹치지 않음, explore 태스크와 그 후속이 아님 — 모두 맞을 때. 묶음의 고정비(worktree·리뷰·통합 검증)가 병렬 이득보다 크면 단독이 빠르다. 묶음을 쓰면 [조정자 절차](references/coordinator.md)를 따른다.
-- **explore 태스크**(FORMAT): 메인 세션에서 실행한다. 시간 제한을 시작 시각과 함께 log에 적고, 실험·e2e 같은 무거운 명령은 `vibe check --heavy -- <cmd>`로 돌린다. 시간이 다 되면 exit 줄대로 측정값을 result에 남기고 마감한다 — 함께는 그 전에 한 번 묻는다.
+경량 경로는 모두 만족할 때만: SSOT 규칙·계약·저장 형식·마이그레이션 변경 없음, 새 결정 없음, 버그/문구/스타일 수정, 코드+테스트 3파일·추가+삭제 100줄 이하(STATE 제외). 태스크·rev 없이 구현 → 영향 테스트+빠른 검사 → 커밋 하나에 STATE log `- YYMMDD fix <area>: <what>` → 묶음 push. 조건이 깨지거나 결정·기획 공백이 나오면 즉시 create-task/update-ssot로 올린다.
+작업 묶음은 단위1에서 만들지 않는다. 사용자의 병렬 요청 또는 독립 단위 2개 이상·각 태스크 3개 이상·touches 분리·explore 제외일 때만 [조정자 절차](references/coordinator.md)를 읽는다.
 
 ## 3. 모드
-- **함께**: 결정 지점마다 선택지형으로 묻되 한 번에 모아서(최대 4개) 묻는다. 각 스킬의 cfg.level 질문법을 그대로 쓴다.
-- **맡김**: 시작 이후 질문 0회. 고른 스킬은 함께 모드와 **같은 질문을 만들고**, 묻는 대신 추천안을 채택해 평소처럼 문서에 반영한 뒤(SSOT에는 일반 `[o]`) inbox `decided` 줄과 보고서 decided에 질문·선택·대안을 남긴다 — 돌아온 사용자는 받았어야 할 질문을 그대로 검토한다.
-  - 과금·데이터 삭제·개인정보·보안 정책은 정하지 않는다 — `[?]`로 남기고 inbox `parked`, 그 결정에 걸린 태스크는 건너뛴다.
-  - 되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일(브랜치 삭제, force push·이력 재작성, 전역·사용자 설정, 배포·릴리스·게시, 유료 외부 서비스, 메시지 발송, 공유·운영 데이터 마이그레이션)은 하지 않고 inbox `parked` 후 다른 일을 계속한다.
-  - blocked는 기다리지 않는다: 기획 공백이면 update-ssot를 추천안으로 진행(잠정, inbox), 기술 공백이면 create-task로 재분해, 그래도 막히면 그 태스크를 주차하고 다음 일로 간다.
-- 전환: 사용자가 "나 나갈게/알아서 해"라고 하면 1절의 맡김 준비(preflight·보고서)를 거쳐 맡김으로. 돌아와서 말을 걸거나 /start-vibe를 실행하면 함께로 — inbox부터 보여 준다. 전환은 `vibe beat --mode`로 active 행에 반영한다.
-- 모드는 이 세션의 것이다. cfg에 쓰지 않는다.
+맡김은 질문 0회. 스킬이 만든 질문의 추천안을 반영하고 inbox decided에 질문·선택·대안·이유를 남긴다. SSOT에는 일반 [o]만 쓴다. 과금·데이터 삭제·개인정보·보안 정책은 [?]+parked. 배포·게시·force push·브랜치 삭제·전역 설정·외부 메시지·공유 데이터 변경 등 되돌리기 어려운 일도 parked로 남기고 관련 태스크를 건너뛴다. 모드는 cfg에 쓰지 않는다.
 
-## 4. 작업 단위마다 커밋·push
-- 단위: 태스크 done, SSOT rev(create-ssot·update-ssot 마감), create-task 묶음, ideation 마감, inbox 정리. 고른 스킬이 마감 단계(STATE log 기록)에 도달하면 변경 파일만 골라 커밋하고 `vibe push`(cfg push가 `-`면 커밋만). 사용자의 관련 없는 변경은 커밋하지 않는다.
-- 태스크 선점: st를 `doing@YYMMDD.<tag>`로 바꾸고 `vibe beat --tag <tag> --doing T###` 후 커밋·push를 **먼저** 한다. push가 거부되면 `vibe sync` 후 그 태스크가 이미 다른 tag의 doing이면 다른 일을 고른다 — 원격이 판정한다.
-- 1시간 넘게 커밋할 단위가 없으면 `vibe checkpoint --tag <tag>`(작업 트리 스냅샷을 `wip/<tag>`로 push, 현재 브랜치는 그대로). 긴 명령 전에도 한 번.
-- 맡김이면 단위마다 보고서 done·checks를 갱신해 같은 커밋에 넣는다. 원격에 CI가 있으면 push 뒤 결과를 확인하고, 실패는 고칠 태스크로 처리한다(맡김에서 못 고치면 inbox `parked`).
+## 4. 커밋·검증·push
+- solo: 선점·active는 첫 작업 커밋에 포함, beat는 세션 시작·끝. 태스크별 커밋 유지. push·보고서 갱신은 태스크 3개(기본), 기획 조각의 태스크 소진, 세션 끝, 반복기 멈춤 중 먼저 온 묶음 경계. loop의 단위 세션 끝은 경계가 아니다.
+- strict(다른 생존 세션·소유 불명 doing): doing tag·active를 별도 커밋·push **먼저**, sync 후 원격 소유가 자기 tag인지 재확인. 다른 tag면 다른 후보. 원격이 판정하며 매 단위 검증·push·보고서를 유지한다. 같은 checkout의 동시 쓰기 금지.
+- 태스크=변경·영향 테스트+typecheck·lint·format. ARCH 단계가 없어도 전체 verify를 태스크에 붙이지 않는다. 코드 묶음 push 전 전체 스위트 한 번, push 뒤 CI. work 매핑은 task→task-verify, batch→verify, CI가 최종 관문이면 group-verify 생략.
+- CI는 묶음당 `vibe ci wait --commit <sha> --diff-base <묶음 시작 SHA> --json` 한 번 또는 push --wait-ci. Claude는 셸 백그라운드+하네스 완료 알림, Codex는 긴 timeout의 단일 블로킹 호출. sleep→조회→보고 모델 루프 금지. 긴 e2e·벤치마크도 완료까지 모델을 깨우지 않는다. 실패는 수정 태스크, 못 고치면 parked. run 없는 push는 CLI가 skipped로 마친다.
+- 1시간마다, 긴 명령 전 `vibe checkpoint --tag <tag>` 유지. 무관한 사용자 변경은 커밋하지 않는다.
 
 ## 5. 마감
-- 남은 일이 없거나 사용자가 멈추라고 할 때. 맡김: 보고서 `to:`·next를 채우고, `vibe awake --stop`.
-- `vibe beat --tag <tag> --end`로 active 행을 지우고 커밋·push. STATE next를 1~3줄로 갱신한다.
-- 보고(cfg.level대로): 한 일, 내린 잠정 결정(inbox 수), 주차한 일, 다음 할 일. 맡김이었다면 보고서 경로를 알려 준다.
+단위1은 다음 단위로 넘어가지 않고 JSON 한 줄(호스트가 요구하면 스키마 결과):
+`{"kind":"task","id":"T001","outcome":"completed","pushed":false,"next":"implementation"}`
+kind=task|planning|inbox|fix|none, outcome=completed|parked|blocked|no_work. pushed는 실제 여부. hostManaged 단위는 active·보고서를 닫지 않는다. 반복기만 끝에서 active 정리·보고서 to/next·최종 묶음 검증/push를 한다. 함께는 단위 완료 시 “다음 단위는 새 대화에서 이어가면 빠르다”고 안내한다.

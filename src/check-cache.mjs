@@ -68,12 +68,13 @@ export async function recordPass(runtime, key, entry) {
 
 // One heavy check at a time per clone (calibration runs, browser suites, integration and
 // group gates), so they never compete for the same CPUs.
-export async function withHeavyLock(runtime, label, run, { timeoutMs = 4 * 60 * 60 * 1000, pollMs = 2000, onWait } = {}) {
+export async function withHeavyLock(runtime, label, run, { timeoutMs = 4 * 60 * 60 * 1000, pollMs = 2000, onWait, signal } = {}) {
   const lock = path.join(runtime, 'heavy')
   await mkdir(runtime, { recursive: true })
   const deadline = Date.now() + timeoutMs
   let waited = false
   for (;;) {
+    if (signal?.aborted) throw new Error('heavy check stopped')
     try {
       await mkdir(lock)
       await writeFile(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, host: os.hostname(), label, at: new Date().toISOString() }))
