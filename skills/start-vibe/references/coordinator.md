@@ -5,7 +5,7 @@ SKILL.md 2절의 조건(독립 단위 2개 이상, 단위마다 태스크 3개 �
 ## 1. 시작
 - 계획(태스크·STATE)을 커밋하고 `vibe push`한 뒤:
   `work start <slug> --push <cfg push> --task-verify '<태스크 단계>' --verify '<단위 통합>' [--group-verify '<묶음 완료>'] [--allow-tool '<규칙>' ...] [--review-path <계약 경로> ...] --json`
-  - 검증 명령은 ARCH의 단계별 verify 결정에서 가져온다. 통합마다 push되므로 브라우저 e2e처럼 오래 걸리는 묶음 검사는 CI에 맡기고 `--group-verify`를 생략할 수 있다.
+  - 검증 명령은 ARCH의 단계별 verify 결정에서 가져온다. 태스크 단계는 영향 단위 테스트+빠른 검사만이다. 대상 브랜치로 통합마다 push하면 통합·e2e를 --verify에 두고 CI가 최종 관문이면 --group-verify를 생략한다. 대상 브랜치 push 없이 모으면 단위 --verify는 빠른 검사만, 통합·e2e는 --group-verify 또는 최종 대상 브랜치 push 관문으로 둔다. 태스크 종료만으로 전체 검사를 실행하지 않는다.
   - `--allow-tool`은 헤드리스 워커가 묻지 않고 실행할 명령 규칙이다(Claude 형식, 예 `Bash(pnpm run *)`). 워커가 도는 새 worktree는 신뢰된 폴더가 아니라서 프로젝트 `.claude/settings.json`의 허용 목록이 적용되지 않는다.
   - `--review-path`는 계약·마이그레이션처럼 언제나 리뷰가 필요한 경로다. 리뷰는 위험한 단위만 받는다(기본 `--review risky`): 변경 300줄 초과(`--review-lines`), touches 밖 변경이나 touches 미선언, review-path 변경, 테스트 파일 변경 없음, 수정 요청·통합 실패 이력, 이 단위 태스크를 가리키는 inbox `decided` — 하나라도 있으면 리뷰, 없으면 정책 승인 후 통합 검증만 한다.
 - 맡김이면 preflight에서 `vibe preflight --probe '<태스크 단계 명령>' --allow-tool '<규칙>'`으로 실제 헤드리스 워커가 그 명령을 권한 확인 없이 실행하는지 실측한다. 거부되면 사용자가 떠나기 전 그 규칙을 허용할지 묻는다.

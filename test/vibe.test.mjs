@@ -141,7 +141,7 @@ test('다른 기기의 진행을 원격에서 감지하고, wip 스냅샷이 오
   await vibePush({ targetRoot: a })
   assert.equal((await vibeStatus({ targetRoot: b, tag: 'bbbb' })).others[0].stale, true)
   await writeFile(path.join(a, 'experiment.txt'), 'half way\n')
-  const snapshot = await vibeCheckpoint({ targetRoot: a, tag: 'aaaa', message: 'calibration round 3' })
+  const snapshot = await vibeCheckpoint({ targetRoot: a, tag: 'aaaa', message: 'iteration 3' })
   assert.equal(snapshot.pushed, true)
   const fresh = await vibeStatus({ targetRoot: b, tag: 'bbbb' })
   assert.equal(fresh.others[0].stale, false)

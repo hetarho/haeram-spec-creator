@@ -29,8 +29,8 @@ test('standalone brief contains exact cited blocks, freshness, touches and runna
   assert.equal(JSON.parse(result.stdout).taskId, 'T001')
 })
 
-test('ARCH r12 prose keeps conditional checks and does not execute backticked paths', () => {
-  const arch = '## decisions\n- ARCH-30 [o] Verification runs in three tiers.\n  - task, before each done commit: `pnpm run typecheck`, `pnpm exec vitest run --changed "$HAERAM_DIFF_BASE" --passWithNoTests`.\n  - a task changing UI also runs `pnpm run build` and only the `tests/e2e` specs: `PREVIEW_BUILD=1 pnpm exec playwright test --project=chromium` with spec paths.\n  - batch, once before a push (`work integrate --verify`): `pnpm run test:unit`, `pnpm run build`.\n  - CI, after code push: ARCH-23 runs every browser; `spec/`, `docs/` do not trigger it.\n'
+test('conditional verification prose is preserved without executing backticked paths', () => {
+  const arch = '## decisions\n- ARCH-3 [o] Verification runs in three tiers.\n  - task, before each done commit: `pnpm run typecheck`, `pnpm exec vitest run --changed "$HAERAM_DIFF_BASE" --passWithNoTests`.\n  - conditional browser coverage uses the `tests/e2e` specs: `PREVIEW_BUILD=1 pnpm exec playwright test --project=chromium` with spec paths at the batch gate.\n  - batch, once before a push (`work integrate --verify`): `pnpm run test:unit`, `pnpm run build`.\n  - CI, after code push: run the remote checks; `spec/`, `docs/` do not trigger them.\n'
   const v = verificationTiers(arch)
   assert.equal(v.task.length, 2); assert.equal(v.batch.length, 2)
   assert.deepEqual(v.ci, [])

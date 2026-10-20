@@ -38,19 +38,24 @@ hostManaged 실행기에서는 초기화·active·보고서 생성/종료·묶�
 | 전환 전 ideation | 도메인 하나 create-ssot → create-task |
 | dep 충족 todo·자기 doing | vibe brief T### → implement-task 1개 |
 | inbox 정리 요청 | status --section inbox로 해당 항목만 반영·log |
-| 일 없음·parked만 남음 | 마감; 맡김에서 새 아이디어를 만들지 않는다 |
+| 기획·기술 판단으로 blocked | 맡김은 추천안으로 기획 한 조각을 끝내고 해당 태스크를 재개 가능하게 복구 |
+| 일 없음·parked만 남음 | 미반영 CI 수정·해결 가능한 blocked가 없는지 확인 후 마감; 맡김에서 새 아이디어를 만들지 않는다 |
 
 경량 경로는 모두 만족할 때만: SSOT 규칙·계약·저장 형식·마이그레이션 변경 없음, 새 결정 없음, 버그/문구/스타일 수정, 코드+테스트 3파일·추가+삭제 100줄 이하(STATE 제외). 태스크·rev 없이 구현 → 영향 테스트+빠른 검사 → 커밋 하나에 STATE log `- YYMMDD fix <area>: <what>` → 묶음 push. 조건이 깨지거나 결정·기획 공백이 나오면 즉시 create-task/update-ssot로 올린다.
 작업 묶음은 단위1에서 만들지 않는다. 사용자의 병렬 요청 또는 독립 단위 2개 이상·각 태스크 3개 이상·touches 분리·explore 제외일 때만 [조정자 절차](references/coordinator.md)를 읽는다.
 
 ## 3. 모드
-맡김은 질문 0회. 스킬이 만든 질문의 추천안을 반영하고 inbox decided에 질문·선택·대안·이유를 남긴다. SSOT에는 일반 [o]만 쓴다. 과금·데이터 삭제·개인정보·보안 정책은 [?]+parked. 배포·게시·force push·브랜치 삭제·전역 설정·외부 메시지·공유 데이터 변경 등 되돌리기 어려운 일도 parked로 남기고 관련 태스크를 건너뛴다. 모드는 cfg에 쓰지 않는다.
+맡김은 질문 0회이며 **되돌릴 수 있는 기획·기술 판단도 위임받은 것**이다. "사용자 의사결정 필요"만으로 blocked·parked·마감하지 않는다. 스킬이 만든 질문은 해당 스킬에서 추천안으로 결정하고 inbox decided에 질문·선택·대안·이유를 남긴다. SSOT에는 일반 [o]만 쓴다. 공백·모순은 update-ssot+create-task 한 조각으로 해소하고 태스크·STATE의 base·dep·st를 맞춰 다음 단위에서 재개한다.
+- 이미 승인된 후속 작업이 CI를 막으면 실제 선행 결과·touches·진행 중 소유권을 확인하고 미착수 태스크의 순서를 조정한다. 태스크와 STATE의 dep을 함께 갱신한다. 완료기준을 낮추거나 검사를 빼서 통과시키지 않는다.
+- 과금·데이터 삭제·개인정보·보안 정책은 [?]+parked. 배포·게시·force push·브랜치 삭제·전역 설정·외부 메시지·공유 데이터 변경 등 되돌리기 어려운 일, 실제 권한·인증 부재도 해당 작업만 parked로 남기고 다른 실행 가능한 태스크로 간다. 모드는 cfg에 쓰지 않는다.
 
 ## 4. 커밋·검증·push
 - solo: 선점·active는 첫 작업 커밋에 포함, beat는 세션 시작·끝. 태스크별 커밋 유지. push·보고서 갱신은 태스크 3개(기본), 기획 조각의 태스크 소진, 세션 끝, 반복기 멈춤 중 먼저 온 묶음 경계. loop의 단위 세션 끝은 경계가 아니다.
 - strict(다른 생존 세션·소유 불명 doing): doing tag·active를 별도 커밋·push **먼저**, sync 후 원격 소유가 자기 tag인지 재확인. 다른 tag면 다른 후보. 원격이 판정하며 매 단위 검증·push·보고서를 유지한다. 같은 checkout의 동시 쓰기 금지.
-- 태스크=변경·영향 테스트+typecheck·lint·format. ARCH 단계가 없어도 전체 verify를 태스크에 붙이지 않는다. 코드 묶음 push 전 전체 스위트 한 번, push 뒤 CI. work 매핑은 task→task-verify, batch→verify, CI가 최종 관문이면 group-verify 생략.
-- CI는 묶음당 `vibe ci wait --commit <sha> --diff-base <묶음 시작 SHA> --json` 한 번 또는 push --wait-ci. Claude는 셸 백그라운드+하네스 완료 알림, Codex는 긴 timeout의 단일 블로킹 호출. sleep→조회→보고 모델 루프 금지. 긴 e2e·벤치마크도 완료까지 모델을 깨우지 않는다. 실패는 수정 태스크, 못 고치면 parked. run 없는 push는 CLI가 skipped로 마친다.
+- 태스크=추가·변경·영향 **단위 테스트**+typecheck·lint·format. 통합·e2e·전체 스위트·CI 대기는 태스크마다 하지 않는다. 테스트 분류는 스크립트 이름이 아닌 격리 범위와 의존성으로 판단한다. 테스트 코드는 필요할 때 함께 수정하고 미실행 통합/e2e 목록은 result limits에 남긴다.
+- 통합·e2e·전체 스위트는 **main/설정된 대상 브랜치로 코드 묶음을 push하기 직전 또는 전체 작업 완료 시** 한 번, CI는 실제 코드 push 뒤 묶음당 한 번이다. 태스크 커밋·WIP 체크포인트·단위 세션 종료는 이 경계가 아니다. 같은 트리에서 통과한 검사를 마감 때 반복하지 않는다. 기존 ARCH가 통합/e2e를 task로 요구하면 맡김의 기획 조각에서 batch로 옮기고 근거를 기록한다. ARCH 단계가 없어도 전체 verify를 태스크에 붙이지 않는다.
+- work 매핑은 task→task-verify. 단위 통합마다 main으로 push하는 묶음은 batch→verify, CI가 최종 관문이면 group-verify 생략. main push 없이 묶음 브랜치에 모으는 경우 verify는 빠른 검사만, 통합·e2e는 group-verify 또는 최종 main push 관문으로 둔다.
+- CI는 묶음당 `vibe ci wait --commit <sha> --diff-base <묶음 시작 SHA> --json` 한 번 또는 push --wait-ci. Claude는 셸 백그라운드+하네스 완료 알림, Codex는 긴 timeout의 단일 블로킹 호출. sleep→조회→보고 모델 루프 금지. 긴 e2e·벤치마크도 완료까지 모델을 깨우지 않는다. 맡김에서 실패는 근거를 담은 수정 태스크를 만들어 **다음 단위로 우선 실행**한다. 수정 태스크 생성만 하고 종료하지 않는다. 기획 판단은 3절대로 해소하고, 실제 권한·외부 작업에 막히면 해당 건만 parked 후 다른 태스크로 간다. 시간·단위 한도와 반복 무진행·실행 실패 제한은 유지한다. run 없는 push는 CLI가 skipped로 마친다.
 - 1시간마다, 긴 명령 전 `vibe checkpoint --tag <tag>` 유지. 무관한 사용자 변경은 커밋하지 않는다.
 
 ## 5. 마감

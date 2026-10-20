@@ -2,8 +2,8 @@
 // Task context size, before and after the 0.7 brief, read from one commit of a target project.
 // Read-only: nothing is written to the target. Token counts need tiktoken on PYTHONPATH (--tokens);
 // they are a tokenizer proxy (o200k_base), not a provider's billing or hidden system prompt.
-//   node scripts/measure-brief.mjs --target ../project [--ref HEAD] [--tasks T201,T225] [--tokens] [--json]
-//     [--questions questions.json]  {"T201": [{"q": "…", "evidence": [{"quote": "exact SSOT substring", "where": "PLAYER-6"}]}]}
+//   node scripts/measure-brief.mjs --target ../project [--ref HEAD] [--tasks T001,T002] [--tokens] [--json]
+//     [--questions questions.json]  {"T001": [{"q": "…", "evidence": [{"quote": "exact SSOT substring", "where": "APP-1"}]}]}
 // --questions asks the same policy questions of every variant: a question is answered when all its
 // evidence quotes are present verbatim.
 import { execFile } from 'node:child_process'

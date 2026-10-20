@@ -10,6 +10,17 @@ import { activeRows } from '../src/state-doc.mjs'
 const passed = async () => ({ ok: true, checks: [] })
 const unit = (outcome = 'completed') => ({ exitCode: 0, result: { kind: 'task', id: 'T001', outcome, pushed: false, next: 'implementation' } })
 const opts = (root) => ({ targetRoot: root, tag: 't060', provider: 'claude', maxUnits: 3 })
+async function completeTask(root, id) {
+  const name = (await readdir(path.join(root, 'spec/tasks'))).find((name) => name.startsWith(`${id}.`))
+  await git(root, 'mv', `spec/tasks/${name}`, `spec/tasks/done/${name}`)
+  const file = path.join(root, 'spec/STATE.md')
+  const state = (await readFile(file, 'utf8')).split('\n').filter((line) => !line.startsWith(`| ${id} |`)).join('\n')
+  await writeFile(file, state)
+  await writeFile(path.join(root, 'app.js'), `// ${id}\n`)
+  await git(root, 'add', 'spec', 'app.js')
+  await git(root, 'commit', '-q', '-m', `${id} done`)
+  return { exitCode: 0, result: { kind: 'task', id, outcome: 'completed', pushed: false, next: 'implementation' } }
+}
 async function fakeAdapter(temporary, body) {
   const file = path.join(temporary, 'fake-provider.cjs'), config = path.join(temporary, 'adapter.json')
   await writeFile(file, `const fs=require('node:fs'),cp=require('node:child_process');let input='';process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{const job=JSON.parse(input);${body}});`)
@@ -102,16 +113,159 @@ test('failed batch gate prevents code push and preserves commits and logs', asyn
   assert.match(await readFile(path.join(root, 'app.js'), 'utf8'), /changed/)
 })
 
-test('CI failure creates a concrete fix task with job evidence', async (t) => {
+test('CI failure at the unit limit preserves a prioritized fix task with evidence for resumption', async (t) => {
   const { root } = await fixture(t)
   const result = await vibeLoop({ ...opts(root), maxUnits: 1 }, { preflight: passed,
     execute: async () => { await writeFile(path.join(root, 'app.js'), '// code\n'); await git(root, 'add', 'app.js'); await git(root, 'commit', '-q', '-m', 'task'); return unit() },
     check: async () => ({ ok: true }), push: async () => ({ ok: true, pushed: await git(root, 'rev-parse', 'HEAD') }),
     ci: async () => ({ ok: false, outcome: 'failure', runUrl: 'https://example.test/run/1', jobs: [{ name: 'unit', conclusion: 'failure', failedSteps: ['Regression'] }] }),
   })
-  assert.equal(result.ok, false); assert.match(result.error, /T004/)
+  assert.equal(result.ok, true, result.error); assert.equal(result.reason, 'max-units'); assert.equal(result.priorityTask, 'T004')
   assert.match(await readFile(path.join(root, 'spec/tasks/T004.fix-ci.md'), 'utf8'), /Regression/)
   assert.match(await readFile(path.join(root, 'spec/STATE.md'), 'utf8'), /implement-task T004/)
+  assert.match(await readFile(path.join(root, result.report), 'utf8'), /priority task: T004/)
+  assert.match(await readFile(path.join(root, result.report), 'utf8'), /CI .*failure https:\/\/example.test\/run\/1/)
+  assert.equal((await readFile(path.join(root, result.report), 'utf8')).match(/task T001: completed/g).length, 1)
+  assert.equal(JSON.parse(await readFile(result.manifest, 'utf8')).priorityTask, 'T004')
+})
+
+test('a pending CI repair keeps priority when the same loop is restarted after a limit', async (t) => {
+  const { root } = await fixture(t)
+  const deps = { preflight: passed, check: async () => ({ ok: true }),
+    push: async () => ({ ok: true, pushed: await git(root, 'rev-parse', 'HEAD') }) }
+  const first = await vibeLoop({ ...opts(root), maxUnits: 1 }, { ...deps,
+    execute: async (options, job) => completeTask(root, job.brief.taskId),
+    ci: async () => ({ ok: false, outcome: 'failure', jobs: [] }),
+  })
+  assert.equal(first.priorityTask, 'T004')
+  const resumed = await vibeLoop({ ...opts(root), maxUnits: 1 }, { ...deps,
+    execute: async (options, job) => { assert.equal(job.brief.taskId, 'T004'); return completeTask(root, 'T004') },
+    ci: async () => ({ ok: true, outcome: 'success', jobs: [] }),
+  })
+  assert.equal(resumed.ok, true, resumed.error); assert.equal(resumed.priorityTask, null)
+})
+
+test('CI failure dispatches the fix before unrelated tasks, without another preflight', async (t) => {
+  const { root } = await fixture(t)
+  const selected = []; let waits = 0, checks = 0, probes = 0
+  const result = await vibeLoop({ ...opts(root), batchSize: 1 }, {
+    preflight: async () => { probes++; return passed() },
+    execute: async (options, job) => {
+      const id = job.brief.taskId; selected.push(id)
+      if (id === 'T004') assert.match(await readFile(path.join(root, 'spec/tasks/T004.fix-ci.md'), 'utf8'), /Regression/)
+      return completeTask(root, id)
+    },
+    check: async () => { checks++; return { ok: true } },
+    push: async () => ({ ok: true, pushed: await git(root, 'rev-parse', 'HEAD') }),
+    ci: async () => ++waits === 1
+      ? { ok: false, outcome: 'failure', runUrl: 'https://example.test/run/1', jobs: [{ name: 'unit', failedSteps: ['Regression'] }] }
+      : { ok: true, outcome: 'success', jobs: [] },
+  })
+  assert.equal(result.ok, true, result.error)
+  assert.deepEqual(selected, ['T001', 'T004', 'T002'])
+  assert.equal(probes, 1); assert.equal(checks, 3); assert.equal(waits, 3)
+  assert.equal(result.priorityTask, null)
+})
+
+test('CI failure on the last task creates new work and repairs it before no-work termination', async (t) => {
+  const { root } = await fixture(t, 1)
+  const selected = []; let waits = 0, checks = 0
+  const result = await vibeLoop({ ...opts(root), maxUnits: 5 }, { preflight: passed,
+    execute: async (options, job) => { selected.push(job.brief.taskId); return completeTask(root, job.brief.taskId) },
+    check: async () => { checks++; return { ok: true } },
+    push: async () => ({ ok: true, pushed: await git(root, 'rev-parse', 'HEAD') }),
+    ci: async () => ++waits === 1
+      ? { ok: false, outcome: 'failure', runUrl: 'https://example.test/run/1', jobs: [{ name: 'unit', failedSteps: ['Regression'] }] }
+      : { ok: true, outcome: 'success', jobs: [] },
+  })
+  assert.equal(result.ok, true, result.error); assert.equal(result.reason, 'no-work')
+  assert.deepEqual(selected, ['T001', 'T002']); assert.equal(checks, 2); assert.equal(waits, 2)
+  assert.equal(result.priorityTask, null)
+  assert.deepEqual(activeRows(await readFile(path.join(root, 'spec/STATE.md'), 'utf8')), [])
+})
+
+test('a blocked-only task gets a planning recovery unit, then resumes implementation', async (t) => {
+  const { root } = await fixture(t, 1)
+  let calls = 0
+  const result = await vibeLoop({ ...opts(root), maxUnits: 5 }, { preflight: passed,
+    execute: async (options, job) => {
+      calls++; assert.equal(job.brief.taskId, 'T001')
+      const stateFile = path.join(root, 'spec/STATE.md'), taskFile = path.join(root, 'spec/tasks/T001.example.md')
+      if (calls === 1) {
+        await writeFile(stateFile, (await readFile(stateFile, 'utf8')).replace('| todo |', '| blocked@261020 |'))
+        await writeFile(taskFile, (await readFile(taskFile, 'utf8')).replace('st:todo', 'st:blocked@261020') + '- outcome: blocked: choose the approved prerequisite order\n')
+        await git(root, 'add', 'spec'); await git(root, 'commit', '-q', '-m', 'record blocker')
+        return unit('blocked')
+      }
+      if (calls === 2) {
+        assert.equal(job.status.parkedOnly, true)
+        assert.equal(job.recovery.reason, 'blocked-task'); assert.equal(job.recovery.taskId, 'T001')
+        await writeFile(stateFile, (await readFile(stateFile, 'utf8')).replace('blocked@261020', 'todo').replace('## next', '## inbox\n- 261020 decided T001: approved prerequisite first (alt: wait) — no implementation dependency\n\n## next'))
+        await writeFile(taskFile, (await readFile(taskFile, 'utf8')).replace('blocked@261020', 'todo'))
+        await git(root, 'add', 'spec'); await git(root, 'commit', '-q', '-m', 'resolve planning')
+        return { exitCode: 0, result: { kind: 'planning', id: 'T001', outcome: 'completed', pushed: false, next: 'implementation' } }
+      }
+      assert.equal(job.recovery, undefined)
+      return completeTask(root, 'T001')
+    },
+    check: async () => ({ ok: true }), push: async () => ({ ok: true, pushed: null }),
+  })
+  assert.equal(result.ok, true, result.error); assert.equal(result.reason, 'no-work'); assert.equal(calls, 3)
+  assert.match(await readFile(path.join(root, result.report), 'utf8'), /decided T001/)
+})
+
+test('parked authorization affects only that task while other runnable tasks continue', async (t) => {
+  const { root } = await fixture(t, 2)
+  const selected = []
+  const result = await vibeLoop({ ...opts(root), maxUnits: 5 }, { preflight: passed,
+    execute: async (options, job) => {
+      const id = job.brief.taskId; selected.push(id); assert.equal(job.recovery, undefined)
+      if (id === 'T002') return completeTask(root, id)
+      const file = path.join(root, 'spec/STATE.md')
+      await writeFile(file, (await readFile(file, 'utf8')).replace('## next', '## inbox\n- 261020 parked T001: production deploy needs authorization\n\n## next'))
+      await git(root, 'add', 'spec'); await git(root, 'commit', '-q', '-m', 'park deploy')
+      return unit('parked')
+    }, check: async () => ({ ok: true }), push: async () => ({ ok: true, pushed: null }),
+  })
+  assert.equal(result.ok, true, result.error); assert.equal(result.reason, 'parked-only')
+  assert.deepEqual(selected, ['T001', 'T002'])
+})
+
+test('recovery still stops repeated blocked units with no progress', async (t) => {
+  const { root } = await fixture(t, 1)
+  let calls = 0
+  const result = await vibeLoop({ ...opts(root), maxUnits: 10 }, { preflight: passed,
+    execute: async (options, job) => { if (++calls === 2) assert.equal(job.recovery.taskId, 'T001'); return unit('blocked') },
+  })
+  assert.equal(result.reason, 'no-progress'); assert.equal(calls, 2)
+})
+
+test('an existing blocked task is recovered even without a previous loop manifest', async (t) => {
+  const { root } = await fixture(t, 1)
+  const stateFile = path.join(root, 'spec/STATE.md'), taskFile = path.join(root, 'spec/tasks/T001.example.md')
+  await writeFile(stateFile, (await readFile(stateFile, 'utf8')).replace('| todo |', '| blocked@261020 |'))
+  await writeFile(taskFile, (await readFile(taskFile, 'utf8')).replace('st:todo', 'st:blocked@261020'))
+  await git(root, 'add', 'spec'); await git(root, 'commit', '-q', '-m', 'existing blocker')
+  const result = await vibeLoop({ ...opts(root), maxUnits: 1 }, { preflight: passed,
+    execute: async (options, job) => { assert.equal(job.recovery.taskId, 'T001'); return completeTask(root, 'T001') },
+    check: async () => ({ ok: true }), push: async () => ({ ok: true, pushed: null }),
+  })
+  assert.equal(result.ok, true, result.error); assert.equal(result.units, 1)
+})
+
+test('metadata-only units do not run batch suites or wait on CI', async (t) => {
+  const { root } = await fixture(t)
+  let calls = 0
+  const result = await vibeLoop({ ...opts(root), maxUnits: 3 }, { preflight: passed,
+    execute: async () => {
+      const file = path.join(root, 'spec/STATE.md')
+      await writeFile(file, (await readFile(file, 'utf8')) + `\n- planning step ${++calls}\n`)
+      await git(root, 'add', 'spec/STATE.md'); await git(root, 'commit', '-q', '-m', 'planning')
+      return { exitCode: 0, result: { kind: 'planning', id: '', outcome: 'completed', pushed: false, next: 'implementation' } }
+    }, check: () => assert.fail('no code batch'), ci: () => assert.fail('no code CI'),
+    push: async () => ({ ok: true, pushed: await git(root, 'rev-parse', 'HEAD') }),
+  })
+  assert.equal(result.ok, true, result.error); assert.equal(calls, 3)
 })
 
 test('a stop marker terminates an active command adapter rather than starting another session', async (t) => {

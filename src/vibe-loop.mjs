@@ -132,6 +132,9 @@ export async function vibeLoop(options = {}, injected = {}) {
   const report = `spec/reports/${new Date(start).toISOString().slice(2, 10).replaceAll('-', '')}-${options.tag}.md`
   const reportPath = path.join(root, report)
   let initialized = false, awake = false, stopped = false, reason = null, error = null, base = context.workspace.git.head, pending = [], failureStreak = 0, noProgress = 0, count = 0, codePushed = false
+  const previous = await readFile(manifest, 'utf8').then(JSON.parse).catch(() => null)
+  let priorityTask = /^T\d+$/.test(previous?.priorityTask ?? '') ? previous.priorityTask : null
+  let recovery = previous?.recovery?.reason === 'blocked-task' && /^T\d+$/.test(previous.recovery.taskId ?? '') ? previous.recovery : null
   const dispatches = [], batches = []
   const controller = new AbortController()
   let stopReason = null, watching = false, checkpointAt = start
@@ -152,7 +155,7 @@ export async function vibeLoop(options = {}, injected = {}) {
       await checkpoint()
     } finally { watching = false }
   }, 1000)
-  const save = async () => writeFile(manifest, JSON.stringify({ ...plan, pid: process.pid, startedAt: new Date(start).toISOString(), report, units: count, dispatches, batches, reason, error, running: !reason }, null, 2))
+  const save = async () => writeFile(manifest, JSON.stringify({ ...plan, pid: process.pid, startedAt: new Date(start).toISOString(), report, units: count, dispatches, batches, priorityTask, recovery, reason, error, running: !reason }, null, 2))
   const metadataCommit = async (message) => {
     const changed = (await git(root, ['status', '--porcelain', '--', 'spec/STATE.md', report])).trim()
     if (!changed) return
@@ -162,7 +165,7 @@ export async function vibeLoop(options = {}, injected = {}) {
   const updateReport = async (closing = false) => {
     let text = await readFile(reportPath, 'utf8')
     if (closing) text = text.replace(/\bto:-/, `to:${new Date(deps.now()).toISOString()}`)
-    const lines = pending.map((entry) => `- ${entry.result?.kind ?? 'session'} ${entry.result?.id ?? '-'}: ${entry.result?.outcome ?? 'failed'} (${entry.head.slice(0, 12)})`)
+    const lines = pending.map((entry) => `- ${entry.result?.kind ?? 'session'} ${entry.result?.id ?? '-'}: ${entry.result?.outcome ?? 'failed'} (${entry.head.slice(0, 12)})`).filter((line) => !text.includes(line))
     if (lines.length) text = text.replace('\n## decided', `${lines.join('\n')}\n\n## decided`)
     const current = await deps.status({ ...options, targetRoot: root, section: 'inbox', fetch: false })
     for (const kind of ['decided', 'parked']) {
@@ -174,7 +177,7 @@ export async function vibeLoop(options = {}, injected = {}) {
     const checks = batches.map((entry) => entry.ci ? `- CI ${entry.ci.commit ?? '-'}: ${entry.ci.outcome} ${entry.ci.runUrl ?? ''}` : `- ${entry.command}: ${entry.ok ? 'pass' : 'fail'} (${entry.log ?? '-'})`)
       .filter((line) => !text.includes(line))
     if (checks.length) text = text.replace('\n## next', `${checks.join('\n')}\n\n## next`)
-    if (closing) text = text.replace(/## next[\s\S]*$/, `## next\n- loop stopped: ${reason}\n`)
+    if (closing) text = text.replace(/## next[\s\S]*$/, `## next\n- loop stopped: ${reason}\n${priorityTask ? `- priority task: ${priorityTask}\n` : ''}`)
     await writeFile(reportPath, text)
   }
   const flush = async (closing = false) => {
@@ -214,8 +217,18 @@ export async function vibeLoop(options = {}, injected = {}) {
         await writeFile(file, text)
         await git(root, ['add', '--', file, taskPath])
         await git(root, ['commit', '--quiet', '--only', '-m', `create-task ${id}: CI failure`, '--', file, taskPath])
-        throw new SkillPackageError(`CI 실패: 수정 태스크 ${id}를 남겼습니다.`, [ci.runUrl ?? ''])
+        // A failed check is work for the next unit, not a request for a person.
+        // Keep it ahead of the normal queue even though its ID was allocated last.
+        priorityTask = id
       }
+    }
+    // The last CI result (and any repair queued at a limit) arrives after the
+    // code push. Persist it in the closing report and publish that metadata too.
+    if (closing && pushed.pushed && code) {
+      await updateReport(true)
+      await metadataCommit(`vibe ${options.tag}: final CI result`)
+      const final = await deps.push({ ...options, targetRoot: root })
+      if (final.ok === false) throw new SkillPackageError('마감 보고서 push 실패')
     }
     base = (await git(root, ['rev-parse', 'HEAD'])).trim(); pending = []
     await save()
@@ -246,8 +259,20 @@ export async function vibeLoop(options = {}, injected = {}) {
       if (count >= maxUnits) { reason = 'max-units'; break }
       let status = await deps.status({ ...options, targetRoot: root, tag: options.tag })
       if (status.git?.fetchError) throw new SkillPackageError('원격 판정 실패', [status.git.fetchError])
-      if (status.parkedOnly) { reason = 'parked-only'; break }
-      if (status.settled || status.route === 'ideation-first') { reason = 'no-work'; break }
+      if (priorityTask && status.remaining && !status.remaining.some((task) => task.id === priorityTask)) priorityTask = null
+      if (recovery && status.remaining && !status.remaining.some((task) => task.id === recovery.taskId)) recovery = null
+      if (!recovery && status.implementation?.blocked?.length) {
+        const inbox = await deps.status({ ...options, targetRoot: root, section: 'inbox', fetch: false })
+        const parked = new Set((inbox.inbox ?? []).filter((entry) => entry.kind === 'parked').flatMap((entry) => entry.refs))
+        const taskId = status.implementation.blocked.find((id) => !parked.has(id))
+        if (taskId) { recovery = { reason: 'blocked-task', taskId }; priorityTask = taskId }
+      }
+      const finished = status.parkedOnly ? 'parked-only' : status.settled || status.route === 'ideation-first' ? 'no-work' : null
+      if (finished && !recovery) {
+        // Flush before deciding there is no more work: CI can add a repair task.
+        if (pending.length) { await flush(); if (priorityTask || recovery) continue }
+        reason = finished; break
+      }
       if (status.concurrency === 'strict') {
         if (pending.length) await flush()
         await metadataCommit(`vibe ${options.tag}: session presence`)
@@ -255,10 +280,12 @@ export async function vibeLoop(options = {}, injected = {}) {
         status = await deps.status({ ...options, targetRoot: root, tag: options.tag })
       }
       const before = { head: (await git(root, ['rev-parse', 'HEAD'])).trim(), state: await readFile(path.join(root, 'spec/STATE.md'), 'utf8') }
-      const selected = status.implementation?.resume?.find((id) => status.runnable?.includes(id)) ?? status.runnable?.[0]
+      const nextTask = status.next?.[0]?.match(/^- implement-task (T\d+)\b/)?.[1]
+      const selected = recovery?.taskId ?? (status.runnable?.includes(priorityTask) ? priorityTask : null) ?? status.implementation?.resume?.find((id) => status.runnable?.includes(id)) ?? (status.runnable?.includes(nextTask) ? nextTask : null) ?? status.runnable?.[0]
       const brief = selected ? await vibeBrief({ targetRoot: root, task: selected, diffBase: before.head }) : null
       const job = { schemaVersion: 1, role: 'unit', mode: 'autopilot', workspaceMode: 'single', workspace: root, tag: options.tag, report, status, brief,
-        cliCommand: [process.execPath, cli], allowTools: allowTool, permissionMode: options.permissionMode ?? 'acceptEdits', diffBase: before.head, hostManaged: true }
+        cliCommand: [process.execPath, cli], allowTools: allowTool, permissionMode: options.permissionMode ?? 'acceptEdits', diffBase: before.head, hostManaged: true,
+        ...(recovery ? { recovery } : {}) }
       const receipt = await deps.execute(options, job, directory, { stopFile, deadline, signal: controller.signal, timeoutMs: Math.min(timeoutMs, Math.max(1, deadline - deps.now())) })
       count++
       const after = { head: (await git(root, ['rev-parse', 'HEAD'])).trim(), state: await readFile(path.join(root, 'spec/STATE.md'), 'utf8') }
@@ -266,6 +293,15 @@ export async function vibeLoop(options = {}, injected = {}) {
       dispatches.push(entry); pending.push(entry)
       await checkpoint()
       const failed = receipt.exitCode !== 0 || !receipt.result
+      if (!failed) {
+        const taskId = receipt.result.id || selected
+        // A unit owns planning as well as implementation. Give a blocked task a
+        // fresh planning unit even if its STATE row is no longer runnable.
+        recovery = receipt.result.outcome === 'blocked' && /^T\d+$/.test(taskId ?? '')
+          ? { reason: 'blocked-task', taskId, previousResult: receipt.result } : null
+        if (recovery) priorityTask = taskId
+        if (receipt.result.outcome === 'parked' && taskId === priorityTask) priorityTask = null
+      }
       failureStreak = failed ? failureStreak + 1 : 0
       noProgress = before.head === after.head && before.state === after.state ? noProgress + 1 : 0
       await save()
@@ -274,10 +310,7 @@ export async function vibeLoop(options = {}, injected = {}) {
       if (noProgress >= 2) { reason = 'no-progress'; break }
       if (failed) continue
       const afterStatus = await deps.status({ ...options, targetRoot: root, tag: options.tag })
-      // Close the last batch directly: do not push a report and immediately push
-      // another document-only commit just to close it.
-      if (afterStatus.parkedOnly) { reason = 'parked-only'; break }
-      if (afterStatus.settled || afterStatus.route === 'ideation-first') { reason = 'no-work'; break }
+      if (priorityTask && afterStatus.remaining && !afterStatus.remaining.some((task) => task.id === priorityTask)) priorityTask = null
       if (count >= maxUnits) { reason = 'max-units'; break }
       const completed = pending.filter((entry) => ['task', 'fix'].includes(entry.result?.kind) && entry.result.outcome === 'completed').length
       if (afterStatus.concurrency === 'strict' || completed >= batchSize || !afterStatus.runnable?.length) await flush()
@@ -297,5 +330,5 @@ export async function vibeLoop(options = {}, injected = {}) {
     await save()
     await rm(lock, { force: true })
   }
-  return { ...plan, ok: !error && reason !== 'session-failures', reason, error, units: count, report, codePushed, manifest }
+  return { ...plan, ok: !error && reason !== 'session-failures', reason, error, units: count, report, codePushed, priorityTask, recovery, manifest }
 }

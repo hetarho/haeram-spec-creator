@@ -7,7 +7,7 @@ import { assembleBrief, specSource } from './spec-context.mjs'
 import { SkillPackageError } from './errors.mjs'
 
 // Extract only explicitly labelled tiers. Conditional prose remains guidance, never
-// a shell command. In particular, ARCH-30's example Chromium invocation needs paths.
+// a shell command. Conditional browser invocations may still need specific paths.
 export function verificationTiers(markdown) {
   const result = { task: [], batch: [], ci: [], guidance: [], declared: false }
   let tier = null, relevant = false
@@ -56,7 +56,7 @@ export async function readVerification(root, archText) {
     if (!verify.task.length) verify.task = ['typecheck', 'lint', 'format:check'].filter((name) => scripts[name]).map((name) => `${manager} ${name}`)
     // Legacy commands belong to the batch gate and are selected explicitly by
     // the caller, rather than treating prose/code examples as executable config.
-    verify.guidance.push('No explicit tiers: task = changed/affected tests plus fast checks; batch = full suite once before code push; CI = after push. Select legacy ARCH batch commands explicitly with --verify.')
+    verify.guidance.push('No explicit tiers: task = changed/affected unit tests plus fast checks; batch = full suite, integration and e2e once before a target-branch code push or final completion; CI = once per code push. Classify tests by their isolation and dependencies, not their script names. Select legacy ARCH batch commands explicitly with --verify.')
   }
   return verify
 }

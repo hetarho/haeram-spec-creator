@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "target": "haeram-soccor (local checkout; read-only, commit f6c73567b89d)",
+  "target": "anonymized-project (read-only snapshot; source identifiers anonymized)",
   "tokenizer": "o200k_base via tiktoken (proxy, not billing; no system prompt)",
   "variants": {
     "docs": "0.5 reading: task + every cited domain doc whole (with chg) + ARCH",
@@ -16,7 +16,7 @@
   "questions": "25 policy questions (exceptions, prohibitions, numbers) written from the full SSOTs by agents that never saw a brief; answered = every evidence quote present verbatim",
   "representative": [
     {
-      "id": "T201",
+      "id": "T001",
       "complete": true,
       "unfollowed": 73,
       "chars": {
@@ -55,11 +55,11 @@
         "old": {
           "answered": 3,
           "missingAt": [
-            "CLUB-3",
-            "CLUB-16",
-            "STAFF-11",
-            "SAVE-19",
-            "PLAYER-22"
+            "DOMG-3",
+            "DOMG-16",
+            "DOMB-11",
+            "DOME-19",
+            "DOMA-22"
           ]
         },
         "closure": {
@@ -85,8 +85,8 @@
         "citedNoReferrers": {
           "answered": 6,
           "missingAt": [
-            "CLUB-3",
-            "CLUB-16"
+            "DOMG-3",
+            "DOMG-16"
           ]
         },
         "deep": {
@@ -96,7 +96,7 @@
       }
     },
     {
-      "id": "T209",
+      "id": "T002",
       "complete": true,
       "unfollowed": 51,
       "chars": {
@@ -135,12 +135,12 @@
         "old": {
           "answered": 3,
           "missingAt": [
-            "MATCH-2",
-            "MATCH-18",
-            "PLAYER-3",
+            "DOMC-2",
+            "DOMC-18",
+            "DOMA-3",
             "ARCH-5",
-            "MATCH-7",
-            "MATCH-1"
+            "DOMC-7",
+            "DOMC-1"
           ]
         },
         "closure": {
@@ -160,32 +160,32 @@
         "cited": {
           "answered": 3,
           "missingAt": [
-            "MATCH-2",
-            "MATCH-18",
-            "PLAYER-3",
-            "MATCH-7",
-            "MATCH-1"
+            "DOMC-2",
+            "DOMC-18",
+            "DOMA-3",
+            "DOMC-7",
+            "DOMC-1"
           ]
         },
         "citedLean": {
           "answered": 3,
           "missingAt": [
-            "MATCH-2",
-            "MATCH-18",
-            "PLAYER-3",
+            "DOMC-2",
+            "DOMC-18",
+            "DOMA-3",
             "ARCH-5",
-            "MATCH-7",
-            "MATCH-1"
+            "DOMC-7",
+            "DOMC-1"
           ]
         },
         "citedNoReferrers": {
           "answered": 3,
           "missingAt": [
-            "MATCH-2",
-            "MATCH-18",
-            "PLAYER-3",
-            "MATCH-7",
-            "MATCH-1"
+            "DOMC-2",
+            "DOMC-18",
+            "DOMA-3",
+            "DOMC-7",
+            "DOMC-1"
           ]
         },
         "deep": {
@@ -195,7 +195,7 @@
       }
     },
     {
-      "id": "T225",
+      "id": "T003",
       "complete": true,
       "unfollowed": 86,
       "chars": {
@@ -234,25 +234,25 @@
         "old": {
           "answered": 2,
           "missingAt": [
-            "MATCH-7",
-            "WEB-17",
-            "WEB-22",
-            "MATCH-5",
-            "MATCH-14",
-            "MATCH-19",
-            "MATCH-20"
+            "DOMC-7",
+            "DOMD-17",
+            "DOMD-22",
+            "DOMC-5",
+            "DOMC-14",
+            "DOMC-19",
+            "DOMC-20"
           ]
         },
         "closure": {
           "answered": 2,
           "missingAt": [
-            "MATCH-7",
-            "WEB-17",
-            "WEB-22",
-            "MATCH-5",
-            "MATCH-14",
-            "MATCH-19",
-            "MATCH-20"
+            "DOMC-7",
+            "DOMD-17",
+            "DOMD-22",
+            "DOMC-5",
+            "DOMC-14",
+            "DOMC-19",
+            "DOMC-20"
           ]
         },
         "brief": {
@@ -266,37 +266,37 @@
         "cited": {
           "answered": 2,
           "missingAt": [
-            "MATCH-7",
-            "WEB-17",
-            "WEB-22",
-            "MATCH-5",
-            "MATCH-14",
-            "MATCH-19",
-            "MATCH-20"
+            "DOMC-7",
+            "DOMD-17",
+            "DOMD-22",
+            "DOMC-5",
+            "DOMC-14",
+            "DOMC-19",
+            "DOMC-20"
           ]
         },
         "citedLean": {
           "answered": 2,
           "missingAt": [
-            "MATCH-7",
-            "WEB-17",
-            "WEB-22",
-            "MATCH-5",
-            "MATCH-14",
-            "MATCH-19",
-            "MATCH-20"
+            "DOMC-7",
+            "DOMD-17",
+            "DOMD-22",
+            "DOMC-5",
+            "DOMC-14",
+            "DOMC-19",
+            "DOMC-20"
           ]
         },
         "citedNoReferrers": {
           "answered": 2,
           "missingAt": [
-            "MATCH-7",
-            "WEB-17",
-            "WEB-22",
-            "MATCH-5",
-            "MATCH-14",
-            "MATCH-19",
-            "MATCH-20"
+            "DOMC-7",
+            "DOMD-17",
+            "DOMD-22",
+            "DOMC-5",
+            "DOMC-14",
+            "DOMC-19",
+            "DOMC-20"
           ]
         },
         "deep": {
@@ -306,7 +306,7 @@
       }
     },
     {
-      "id": "T231",
+      "id": "T004",
       "complete": true,
       "unfollowed": 47,
       "chars": {
@@ -343,7 +343,7 @@
       "questions": null
     },
     {
-      "id": "T248",
+      "id": "T005",
       "complete": true,
       "unfollowed": 80,
       "chars": {
@@ -382,7 +382,7 @@
   ],
   "allActiveTasks": {
     "tasks": 56,
-    "commit": "f6c73567b89dfe6d49f9a9f904ffa788e2343b08",
+    "commit": null,
     "incomplete": [],
     "oldLostBlocks": 0,
     "chars": {

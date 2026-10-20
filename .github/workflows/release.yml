@@ -35,4 +35,5 @@ jobs:
       - if: steps.guard.outputs.publish == 'true'
         run: npm run release:check
       - if: steps.guard.outputs.publish == 'true'
-        run: npm publish
+        # release:check above already ran the prepublishOnly validation.
+        run: npm publish --ignore-scripts

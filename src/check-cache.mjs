@@ -66,7 +66,7 @@ export async function recordPass(runtime, key, entry) {
   await rename(temporary, path.join(runtime, 'checks.json'))
 }
 
-// One heavy check at a time per clone (calibration runs, browser suites, integration and
+// One heavy check at a time per clone (browser suites, integration and
 // group gates), so they never compete for the same CPUs.
 export async function withHeavyLock(runtime, label, run, { timeoutMs = 4 * 60 * 60 * 1000, pollMs = 2000, onWait, signal } = {}) {
   const lock = path.join(runtime, 'heavy')

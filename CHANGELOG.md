@@ -1,8 +1,15 @@
 # Changelog
 
+## 0.7.2
+
+- Autopilot resolves reversible planning decisions through the planning skills and records its choices instead of waiting for a user. Blocked tasks receive a fresh recovery unit; CI failures queue a prioritized repair and continue within the configured limits. Persist pending repairs and final CI evidence for resumption.
+- Task sessions run affected unit tests and fast checks. Integration/e2e suites run at the target-branch push or final completion gate, with one CI wait per code batch and explicit records of deferred checks.
+- The publishing workflow runs its release gate once, avoiding a second identical run through the npm publish lifecycle.
+- Remove target-project details from reusable instructions and examples; anonymize historical measurement identifiers. Document project independence for both coding agents.
+
 ## 0.7.1
 
-- create-task: shared helpers, types and frame conversions get one common location named in impl notes (and in that task's touches), later tasks point to them by name; tunable values are written as config names, with the number only in the task that defines the config. Applies to solo work too, not only work-group foundations. (Measured on haeram-soccor T206–T212: per-file touches and literal numbers in impl notes produced the same helpers in five files and configs nobody read.)
+- create-task: shared helpers and types get one common location named in impl notes (and in that task's touches), later tasks point to them by name; tunable values are written as config names, with the number only in the task that defines the config. Applies to solo work too, not only work-group foundations.
 - implement-task: search for an existing helper/type/config before writing a new one; solo work may move a helper to a shared file outside touches (noted in limits), workers reuse or note it; read tunables through their config. Before the commit, skim the task's own diff for redefinitions, literal numbers that have a config, unread configs/exports, stale comments and repeated expressions.
 - review-task: those same points are findings.
 

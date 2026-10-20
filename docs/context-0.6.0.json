@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "baselineRef": "8d2020d87a5354e1485edbe5abe5c1aed13e362a",
-  "target": "haeram-soccor (local checkout; read-only snapshot)",
+  "target": "anonymized-project (local checkout; read-only snapshot)",
   "systemPrompt": "not observable; excluded on both sides",
   "recipe": "task session = start-vibe + implement-task + STATE/full FORMAT before; status/task FORMAT excerpt after. Task-specific brief and provider wrapper excluded. Token counts are tokenizer proxies, not Claude billing or observed maximum context.",
   "measured": {

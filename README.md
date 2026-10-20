@@ -104,7 +104,7 @@ Claude Code나 Codex를 설치하려는 프로젝트에서 열고 다음 프롬�
 ### 아이디어는 `/ideation`
 
 ```text
-/ideation 시즌 기록실에 다른 구단 비교 넣으면 좋겠다
+/ideation 작업 기록에서 기간별 비교를 할 수 있으면 좋겠다
 ```
 
 생각날 때마다 아이디어를 받아 적습니다. 더 이야기하고 싶으면 발산·수렴 루프를 돌고, 쌓인 문서는 `/start-vibe`가 기획으로 가져갑니다.
@@ -152,7 +152,9 @@ npx haeram-spec-creator@0.6.0 vibe loop --tag k3f9 --stop --json
 
 반복기는 preflight·active·보고서를 한 번 준비한 뒤 태스크 하나, 기획 한 조각(SSOT+create-task), inbox 정리마다 새 세션을 시작합니다. `.git/haeram/v1/loops/<tag>/loop.json`에 상태·로그·세션 ID·정지 파일 경로를 남깁니다. `--detach`는 부모 터미널과 분리하고 macOS에서는 caffeinate를 사용합니다. STOP 표식은 재시작 전에 직접 지웁니다. headless 세션은 프로젝트 설정을 사용할 수 있는 메인 checkout에서 권한을 실측하며 기본은 Claude acceptEdits+허용 목록, Codex workspace-write입니다. 필요한 명령은 `--allow-tool 'Bash(pnpm *)'`처럼 추가합니다. 사용자가 명시한 `--permission-mode bypass`만 권한 우회를 켭니다.
 
-태스크 검증은 영향 테스트+빠른 검사, 전체 검증은 코드 묶음 push 전 한 번, CI는 push 뒤입니다. ARCH에 task/batch/CI 하위 줄이 있으면 그대로 사용하고, 조건부 브라우저 검사는 브리핑의 guidance로 남깁니다. legacy ARCH의 batch는 package.json의 verify/test 스크립트, 또는 명시적 `--verify '<command>'`를 사용합니다. 검증 없는 코드 push는 중단합니다.
+맡김은 되돌릴 수 있는 기획·기술 판단을 추천안으로 결정하고 STATE inbox decided에 근거를 남깁니다. 구현이 판단 문제로 막히면 새 기획 단위로 해소하고 재개하며, 이미 승인된 작업을 앞당겨야 할 때도 실제 의존성을 확인해 순서를 조정합니다. CI 실패는 근거가 담긴 수정 태스크를 만들고 다음 단위로 우선 실행합니다. 실제 권한 부재나 과금·데이터 삭제·개인정보·보안 정책·되돌리기 어려운 외부 작업은 해당 건만 주차하고 다른 작업을 계속합니다. 시간·단위·반복 실패 제한은 그대로 적용하며, 한도에 닿으면 `loop.json`과 보고서에 우선 재개할 태스크를 남깁니다.
+
+태스크마다 추가·변경·영향 단위 테스트와 타입·린트·포맷 검사만 실행합니다. 통합·e2e·전체 스위트는 설정된 대상 브랜치로 코드 묶음을 push하기 직전 또는 전체 작업 완료 시 한 번 실행하며, CI도 실제 코드 push 묶음당 한 번만 기다립니다. 태스크 커밋·WIP 체크포인트·단위 세션 종료는 전체 검사 경계가 아닙니다. 테스트는 스크립트 이름이 아닌 격리 범위·의존성으로 분류하며, 미실행 검사는 result limits에 남겨 묶음 관문에서 확인합니다. ARCH의 task/batch/CI 하위 줄도 이 단계에 맞춥니다. legacy ARCH의 batch는 package.json의 verify/test 스크립트, 또는 명시적 `--verify '<command>'`를 사용합니다. 검증 없는 코드 push는 중단합니다.
 
 ```bash
 npx haeram-spec-creator@0.6.0 vibe brief T200 --json
