@@ -95,14 +95,16 @@ stdout은 최종 JSON 객체 하나만 출력하고 진행 로그는 stderr로 �
 
 runner는 빈 슬롯을 채우고 수정 요청을 우선 배정하며 리뷰 대기열을 처리한다. 대기 중 모델 호출은 하지 않는다. 살아 있는 자식 프로세스의 heartbeat는 10초마다 기록하지만 에이전트의 의미 있는 진행을 보장하지는 않는다. 장시간 작업자는 board를 다시 읽고 정책 변경을 판단해야 한다.
 
-완료 시 `outcome:completed`(`--group-verify`를 지정했다면 그 검증까지 통과해야 한다, 결과는 `finish`). 더 진행할 수 없으면 `needs-attention`과 남은 작업을 반환한다. 횟수 한도는 `dispatch-limit`, 종료 신호/heartbeat 실패는 `interrupted`. maxTaskRuns는 한 번의 run 안에서 태스크별·역할별 최대 실행 횟수이며 재실행 전에 반복 실패 원인을 확인한다. 자동 통합 실패는 같은 run에서 무한 재시도하지 않는다.
+완료 시 `outcome:completed`(`--group-verify`를 지정했다면 그 검증까지 통과해야 한다, 결과는 `finish`). 더 진행할 수 없으면 `needs-attention`과 남은 작업을 반환한다(`remaining`에 태스크와 attempt ID 포함). 횟수 한도는 `dispatch-limit`, 종료 신호/heartbeat 실패는 `interrupted`. maxTaskRuns는 한 번의 run 안에서 태스크별·역할별 최대 실행 횟수이며 재실행 전에 반복 실패 원인을 확인한다. 자동 통합 실패와 재시도 횟수는 attempt가 아니라 제출물(`submissionId`, 없으면 제출 commit)별로 기억한다. 같은 제출물의 비일시적 실패는 같은 run에서 다시 시도하지 않지만, 고쳐서 재제출·재승인하면 같은 attempt도 다시 통합한다. Claude·Codex와 command 어댑터 모두에 적용된다.
 
 ### 맡김(autopilot)
 
 `work run --autopilot`은 사람이 없다는 전제로 돈다.
-- 결정 요청만 남아도 끝나지 않고 조정자의 답을 기다린다(모델 호출 없음, 기본 2시간 `--decision-wait-ms`, 지나면 `decision-wait`로 끝남). 조정자 세션은 `work next --coordinator --autopilot` 루프에서 `decide`를 받아 잠정 update-ssot(그 태스크의 base 갱신 포함)를 커밋하고 `work update --attempt <id> --status doing --note '<결정과 rev>'`로 재개한다. 실행기는 기획 브랜치를 그 워커 공간에 합치고 같은 세션을 이어 실행한다. 조정자는 단위·리뷰를 맡지 않는다.
+- 결정 요청만 남으면 조정자의 답을 기다린다(모델 호출 없음, 기본 15분=900000ms, 명시적인 `--decision-wait-ms` 우선, 지나면 `decision-wait`로 끝남). 대기를 시작하거나 대상이 바뀌면 attempt ID·태스크·질문·요청 시각·대기 시작·기한을 stderr와 runtime 이력에 남긴다. 함께 모드는 사용자가 결정하도록 대기 없이 반환한다.
+- 승인됐지만 통합하지 못한 제출물이 남으면 결정 대기로 숨기지 않는다. 새 제출물은 다시 통합하고, 같은 제출물이 이미 실패해 더 진행할 수 없으면 즉시 `needs-attention`으로 끝내고 `remaining`에 그 attempt를 남긴다.
+- 조정자 세션은 `work next --coordinator --autopilot` 루프에서 `decide`를 받아 잠정 update-ssot(그 태스크의 base 갱신 포함)를 커밋한 직후 바로 `work update --attempt <id> --status doing --note '<결정·rev·순서 조건>'`으로 재개한다. 선행 통합을 기다리며 재개를 미루지 않는다. 순서 의존은 태스크 deps(`dep:`)에 반영하고 메모로 넘기며 실행기와 runtime이 순서를 맞춘다. 실행기는 기획 브랜치를 그 워커 공간에 합치고 같은 세션을 이어 실행한다. 조정자는 단위·리뷰를 맡지 않는다.
 - timeout이면 끊기 전에 작업 공간을 `refs/haeram/checkpoints/<attempt>`로 스냅샷하고(30분마다도, `--checkpoint-ms`) 진행분을 `WIP` 커밋으로 남긴 뒤, 같은 세션으로 한 번 더 이어 간다(태스크 실행 횟수 한도 안에서). `--push`가 있는 묶음은 스냅샷을 `wip/<attempt 8자>`로도 push한다.
-- 계획 커밋이나 다른 통합이 검증 도중 상위 브랜치를 옮긴 통합은 같은 실행 안에서 몇 번 다시 시도한다.
+- 계획 커밋이나 다른 통합이 검증 도중 상위 브랜치를 옮긴 통합은 제출물마다 최대 3회 시도한다. 재제출하면 이 횟수도 새로 센다.
 - macOS에서는 실행기 수명 동안 `caffeinate -w`로 절전을 막는다(`HAERAM_NO_AWAKE=1`이면 끔).
 
 ### 진행 저장

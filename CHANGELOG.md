@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Track runner integration failures and bounded transient retries by submission ID (or submitted commit), allowing repaired and reapproved attempts to integrate in the same run without repeatedly retrying a failed submission. Applies to Claude, Codex and command adapters.
+- When approved submissions cannot integrate and no jobs remain, return `needs-attention` with their attempt IDs instead of waiting on unrelated decisions. Log decision-wait targets, questions and deadlines to stderr and runtime history.
+- Default autopilot decision waits to 15 minutes (900000ms); explicit `--decision-wait-ms` still takes precedence. Pair mode keeps its immediate return for unanswered decisions so the user can decide; its unused two-hour wait default remains for compatibility. Coordinators resume immediately after a planning commit and express ordering through task dependencies and notes.
+
 ## 0.7.2
 
 - Autopilot resolves reversible planning decisions through the planning skills and records its choices instead of waiting for a user. Blocked tasks receive a fresh recovery unit; CI failures queue a prioritized repair and continue within the configured limits. Persist pending repairs and final CI evidence for resumption.

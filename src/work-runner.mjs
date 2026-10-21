@@ -77,7 +77,7 @@ export async function runWork(options) {
   // Autopilot: nobody answers. Planning decisions are filed for the coordinator, and the
   // runner waits for them (no model calls) instead of ending while they are open.
   const autopilot = Boolean(options.autopilot)
-  const decisionWaitMs = positive(options.decisionWaitMs, 2 * 60 * 60 * 1000, 'decision-wait-ms')
+  const decisionWaitMs = positive(options.decisionWaitMs, (autopilot ? 15 : 120) * 60 * 1000, 'decision-wait-ms')
   const checkpointMs = positive(options.checkpointMs, 30 * 60 * 1000, 'checkpoint-ms')
   const pollMs = positive(options.pollMs, 5000, 'poll-ms')
   const context = await repository(options)
@@ -87,11 +87,11 @@ export async function runWork(options) {
   const groupVerify = options.groupVerify ?? stored.verify?.group ?? []
   if (options.dryRun) {
     const group = groupOf(await readRuntime(context.root), options.work)
-    return { schemaVersion: 1, dryRun: true, work: group.id, limits: workLimits(group.limits), adapter: config, verify, taskVerify, groupVerify, modelRequests: 0 }
+    return { schemaVersion: 1, dryRun: true, work: group.id, limits: workLimits(group.limits), adapter: config, verify, taskVerify, groupVerify, autopilot, decisionWaitMs, modelRequests: 0 }
   }
   const run = { adapter: config.kind, providers: config.roles ? Object.fromEntries(Object.entries(config.roles).map(([role, entry]) => [role, { provider: entry.provider, model: entry.model, version: entry.version }])) : null,
     workers: config.workers?.map((entry) => ({ provider: entry.provider, model: entry.model, version: entry.version })) ?? null,
-    id: randomUUID(), pid: process.pid, host: os.hostname(), startedAt: now() }
+    id: randomUUID(), pid: process.pid, host: os.hostname(), startedAt: now(), autopilot, decisionWaitMs }
   const group = await transaction(context.root, (state) => {
     const group = groupOf(state, options.work)
     if (group.runner) fail('작업 묶음에 runner가 이미 있습니다. 종료 후 runner-recover로 확인하세요.', [JSON.stringify(group.runner)])
@@ -103,6 +103,8 @@ export async function runWork(options) {
   const failures = []
   const integrationFailures = new Set()
   const integrationTries = new Map()
+  // A repaired, resubmitted attempt is eligible again; retry limits belong to its submission.
+  const integrationKey = (entry) => `${entry.id}:${entry.submissionId ?? entry.verifiedCommit}`
   const counts = new Map()
   let dispatched = 0
   let stopping = false
@@ -113,9 +115,22 @@ export async function runWork(options) {
   const decisions = []
   let lastActivity = Date.now()
   let decisionTimedOut = false
+  let integrationStalled = false
   const outcomeFor = (board) => interrupted || heartbeatError ? 'interrupted' : board.tasks.length === 0 && !finishError ? 'completed'
-    : board.tasks.every((task) => task.mainSession) && !finishError ? 'main-session' : dispatched >= config.maxDispatches ? 'dispatch-limit'
+    : board.tasks.every((task) => task.mainSession) && !finishError ? 'main-session' : integrationStalled ? 'needs-attention' : dispatched >= config.maxDispatches ? 'dispatch-limit'
       : decisionTimedOut ? 'decision-wait' : 'needs-attention'
+  const recordDecisionWait = async (attempts) => {
+    if (JSON.stringify(run.decisionWait?.attempts ?? []) === JSON.stringify(attempts)) return
+    if (attempts.length) run.decisionWait = { startedAt: now(), deadlineAt: new Date(lastActivity + decisionWaitMs).toISOString(), attempts }
+    else delete run.decisionWait
+    await transaction(context.root, (state) => {
+      const runner = groupOf(state, group.id).runner
+      if (runner?.id !== run.id) fail('runner ownership changed')
+      if (run.decisionWait) runner.decisionWait = run.decisionWait
+      else delete runner.decisionWait
+    })
+    if (run.decisionWait) process.stderr.write(`[work run] decision-wait ${JSON.stringify(run.decisionWait)}\n`)
+  }
   // Keep a Mac awake for exactly as long as this runner lives.
   let awake = null
   if (process.platform === 'darwin' && (options.env ?? process.env).HAERAM_NO_AWAKE !== '1') {
@@ -191,6 +206,7 @@ export async function runWork(options) {
       else await transaction(context.root, (state) => { Object.assign(attemptOf(state, attempt.id), { status: 'blocked', reason: 'runner stopped before launch' }) })
       return
     }
+    await recordDecisionWait([])
     const workspace = review?.workspace ?? attempt.workspace
     let expectedHead = null
     const live = await readRuntime(context.root)
@@ -342,15 +358,20 @@ export async function runWork(options) {
       if (stopping) break
       let state = await readRuntime(context.root)
       const entries = () => Object.values(state.attempts).filter((entry) => entry.group === group.id)
-      const approved = entries().find((entry) => entry.status === 'approved' && !integrationFailures.has(entry.id))
+      const approved = entries().find((entry) => entry.status === 'approved' && !integrationFailures.has(integrationKey(entry)))
       if (approved && !groupOf(state, group.id).operation) {
+        await recordDecisionWait([])
+        const key = integrationKey(approved)
         try { await integrateWork({ ...options, attempt: approved.id, verify, signal: abort.signal }) } catch (error) {
           const current = (await readRuntime(context.root)).attempts[approved.id]
           // A planning commit or another landing can move the branch mid-check: try again a few times.
           const transient = (error.details ?? []).some((detail) => /이동했습니다|미커밋·미추적|기획 공간의 HEAD/.test(String(detail)))
-          const tries = (integrationTries.get(approved.id) ?? 0) + 1
-          integrationTries.set(approved.id, tries)
-          if (current.status !== 'ready' && (current.status !== 'approved' || !transient || tries >= 3)) { integrationFailures.add(approved.id); failures.push({ attempt: approved.id, role: 'integration', error: error.message }) }
+          const tries = (integrationTries.get(key) ?? 0) + 1
+          integrationTries.set(key, tries)
+          if (current.status !== 'ready' && (current.status !== 'approved' || !transient || tries >= 3)) {
+            integrationFailures.add(key)
+            failures.push({ attempt: approved.id, submissionId: approved.submissionId, commit: approved.verifiedCommit, role: 'integration', error: error.message })
+          }
           else if (current.status === 'approved') await sleep(pollMs)
         }
         continue
@@ -388,9 +409,21 @@ export async function runWork(options) {
         }
       }
       if (!jobs.size) {
+        state = await readRuntime(context.root)
+        const pendingIntegrations = entries().filter((entry) => entry.status === 'approved')
+        // A coordinator may have resubmitted while slots were being filled. Try the fresh
+        // submission first; a failed submission cannot make progress by waiting for a decision.
+        if (pendingIntegrations.length) {
+          await recordDecisionWait([])
+          if (!groupOf(state, group.id).operation && pendingIntegrations.some((entry) => !integrationFailures.has(integrationKey(entry)))) continue
+          integrationStalled = true
+          break
+        }
         // Unattended, a filed decision is answered by the coordinator: wait for it instead of ending.
-        const waiting = Object.values((await readRuntime(context.root)).attempts).some((entry) => entry.group === group.id && entry.status === 'blocked' && entry.decision && !entry.decision.answeredAt)
-        if (!autopilot || !waiting || stopping) break
+        const waiting = entries().filter((entry) => entry.status === 'blocked' && entry.decision && !entry.decision.answeredAt)
+          .map((entry) => ({ attempt: entry.id, taskId: entry.taskId, question: entry.decision.question, requestedAt: entry.decision.at }))
+        if (!autopilot || !waiting.length || stopping) break
+        await recordDecisionWait(waiting)
         if (Date.now() - lastActivity > decisionWaitMs) { decisionTimedOut = true; break }
         await sleep(pollMs)
         continue
@@ -429,6 +462,6 @@ export async function runWork(options) {
   const attempts = status.attempts.filter((entry) => entry.group === group.id)
   return { schemaVersion: 1, run: run.id, dispatched, failures, decisions, heartbeatError, snapshot, snapshotError, finish, finishError, summary: board.summary,
     outcome: outcomeFor(board),
-    remaining: board.tasks.map(({ id, waitingOn, runtimeStatus }) => ({ id, waitingOn, runtimeStatus })),
+    remaining: board.tasks.map(({ id, waitingOn, runtimeStatus, attempt }) => ({ id, waitingOn, runtimeStatus, attempt: attempt?.id ?? null })),
     attempts: attempts.map(({ id, taskId, status, reason }) => ({ id, taskId, status, reason })) }
 }
