@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.3
 
 - Track runner integration failures and bounded transient retries by submission ID (or submitted commit), allowing repaired and reapproved attempts to integrate in the same run without repeatedly retrying a failed submission. Applies to Claude, Codex and command adapters.
 - When approved submissions cannot integrate and no jobs remain, return `needs-attention` with their attempt IDs instead of waiting on unrelated decisions. Log decision-wait targets, questions and deadlines to stderr and runtime history.
