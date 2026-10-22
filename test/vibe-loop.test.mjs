@@ -145,10 +145,10 @@ test('a pending CI repair keeps priority when the same loop is restarted after a
   assert.equal(resumed.ok, true, resumed.error); assert.equal(resumed.priorityTask, null)
 })
 
-test('CI failure dispatches the fix before unrelated tasks, without another preflight', async (t) => {
+test('batch boundaries only record the report; the gate, push and CI run once the work runs out', async (t) => {
   const { root } = await fixture(t)
-  const selected = []; let waits = 0, checks = 0, probes = 0
-  const result = await vibeLoop({ ...opts(root), batchSize: 1 }, {
+  const selected = []; let waits = 0, checks = 0, probes = 0, pushes = 0
+  const result = await vibeLoop({ ...opts(root), batchSize: 1, maxUnits: 6 }, {
     preflight: async () => { probes++; return passed() },
     execute: async (options, job) => {
       const id = job.brief.taskId; selected.push(id)
@@ -156,14 +156,16 @@ test('CI failure dispatches the fix before unrelated tasks, without another pref
       return completeTask(root, id)
     },
     check: async () => { checks++; return { ok: true } },
-    push: async () => ({ ok: true, pushed: await git(root, 'rev-parse', 'HEAD') }),
+    push: async () => { pushes++; return { ok: true, pushed: await git(root, 'rev-parse', 'HEAD') } },
     ci: async () => ++waits === 1
       ? { ok: false, outcome: 'failure', runUrl: 'https://example.test/run/1', jobs: [{ name: 'unit', failedSteps: ['Regression'] }] }
       : { ok: true, outcome: 'success', jobs: [] },
   })
-  assert.equal(result.ok, true, result.error)
-  assert.deepEqual(selected, ['T001', 'T004', 'T002'])
-  assert.equal(probes, 1); assert.equal(checks, 3); assert.equal(waits, 3)
+  assert.equal(result.ok, true, result.error); assert.equal(result.reason, 'no-work')
+  // The CI repair still runs before the loop ends, without another preflight.
+  assert.deepEqual(selected, ['T001', 'T002', 'T003', 'T004'])
+  assert.equal(probes, 1); assert.equal(checks, 2); assert.equal(waits, 2)
+  assert.ok(pushes <= 3, `pushes: ${pushes}`)
   assert.equal(result.priorityTask, null)
 })
 
@@ -297,8 +299,10 @@ test('detached host survives parent return and writes its final manifest with on
   assert.doesNotMatch(await readFile(path.join(root, state.report), 'utf8'), /to:-/)
 })
 
-test('strict concurrency keeps per-unit batch gates and pushes', async (t) => {
+test('strict concurrency with a push branch keeps per-unit batch gates and pushes', async (t) => {
   const { root } = await fixture(t)
+  const file = path.join(root, 'spec/STATE.md')
+  await writeFile(file, (await readFile(file, 'utf8')).replace('- push: -', '- push: main')); await git(root, 'commit', '-qam', 'push branch')
   let checks = 0, pushes = 0, n = 0
   const result = await vibeLoop({ ...opts(root), maxUnits: 2 }, { preflight: passed,
     status: async (options) => ({ ...await vibeStatus(options), concurrency: 'strict' }),

@@ -4,7 +4,7 @@ import test from 'node:test'
 
 const skillsRoot = new URL('../skills/', import.meta.url)
 const HEADING = '## 공통 규칙 (모든 spec 스킬)'
-const MODE = '맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 모드가 정해지지 않았으면 함께 모드다.'
+const MODE = '맡김 모드(start-vibe)에서는 묻지 않는다 — 추천안으로 진행하고 STATE inbox와 보고서에 남긴다(되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일은 주차). 권한 확인 창도 질문이다 — 창이 뜰 만한 명령은 실행하지 않고 주차한다(start-vibe 3절). 모드가 정해지지 않았으면 함께 모드다.'
 // CLAUDE.md principle 2: the same five rules everywhere, except these documented wordings.
 const EXCEPTIONS = { 1: ['create-architecture', 'ideation', 'start-vibe'], 3: ['create-narrative', 'ideation'], 4: ['create-narrative', 'ideation'] }
 

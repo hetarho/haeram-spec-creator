@@ -180,11 +180,13 @@ export async function vibeLoop(options = {}, injected = {}) {
     if (closing) text = text.replace(/## next[\s\S]*$/, `## next\n- loop stopped: ${reason}\n${priorityTask ? `- priority task: ${priorityTask}\n` : ''}`)
     await writeFile(reportPath, text)
   }
-  const flush = async (closing = false) => {
+  // A batch boundary only records the report. Batch suites, the push and the CI wait run when
+  // the work runs out, at the end, or per unit under strict concurrency: a loop pushes once.
+  const flush = async (closing = false, publish = closing) => {
     const head = (await git(root, ['rev-parse', 'HEAD'])).trim()
     const files = (await git(root, ['diff', '--name-only', base, head])).trim().split('\n').filter(Boolean)
     const code = files.some((file) => !/^(spec\/|docs\/)|\.md$/i.test(file))
-    if (code) {
+    if (code && publish) {
       if (!batchVerify.length) throw new SkillPackageError('코드 push 전 묶음 검증이 없습니다. ARCH batch 단계 또는 --verify를 지정하세요.')
       for (const command of batchVerify) {
         const checked = await deps.check({ targetRoot: root, tier: 'batch', diffBase: base, heavy: true, signal: controller.signal, timeoutMs: Math.min(timeoutMs, Math.max(1, deadline - deps.now())) }, command)
@@ -194,6 +196,8 @@ export async function vibeLoop(options = {}, injected = {}) {
     }
     await updateReport(closing)
     await metadataCommit(`vibe ${options.tag}: ${closing ? 'close report' : 'batch report'}`)
+    // base stays at the last published commit, so the next publish still sees this code.
+    if (!publish) { pending = []; await save(); return }
     const pushed = await deps.push({ ...options, targetRoot: root })
     if (pushed.ok === false) throw new SkillPackageError('묶음 push 실패')
     if (pushed.pushed && code) {
@@ -269,12 +273,13 @@ export async function vibeLoop(options = {}, injected = {}) {
       }
       const finished = status.parkedOnly ? 'parked-only' : status.settled || status.route === 'ideation-first' ? 'no-work' : null
       if (finished && !recovery) {
-        // Flush before deciding there is no more work: CI can add a repair task.
-        if (pending.length) { await flush(); if (priorityTask || recovery) continue }
+        // Publish before deciding there is no more work: CI can add a repair task.
+        if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== base) { await flush(false, true); if (priorityTask || recovery) continue }
         reason = finished; break
       }
-      if (status.concurrency === 'strict') {
-        if (pending.length) await flush()
+      // Claims across clones need a push branch; commit-only checkouts work alone.
+      if (status.concurrency === 'strict' && context.target) {
+        if (pending.length) await flush(false, true)
         await metadataCommit(`vibe ${options.tag}: session presence`)
         await deps.push({ ...options, targetRoot: root })
         status = await deps.status({ ...options, targetRoot: root, tag: options.tag })
@@ -313,7 +318,7 @@ export async function vibeLoop(options = {}, injected = {}) {
       if (priorityTask && afterStatus.remaining && !afterStatus.remaining.some((task) => task.id === priorityTask)) priorityTask = null
       if (count >= maxUnits) { reason = 'max-units'; break }
       const completed = pending.filter((entry) => ['task', 'fix'].includes(entry.result?.kind) && entry.result.outcome === 'completed').length
-      if (afterStatus.concurrency === 'strict' || completed >= batchSize || !afterStatus.runnable?.length) await flush()
+      if (afterStatus.concurrency === 'strict' || completed >= batchSize || !afterStatus.runnable?.length) await flush(false, afterStatus.concurrency === 'strict' && Boolean(context.target))
     }
   } catch (caught) { reason = 'failed'; error = caught.message }
   finally {

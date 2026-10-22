@@ -246,11 +246,13 @@ test('heavy lock은 무거운 검사를 하나씩만 실행한다', async (t) =>
   assert.equal(peak, 1)
 })
 
-test('preflight는 push 대상이 없으면 사람이 정할 항목으로 돌려준다', async (t) => {
+test('preflight는 push 대상이 없으면 커밋만으로 보고 묻지 않는다', async (t) => {
   const { a } = await machines(t, { state: STATE.replace('- push: main', '- push: ?') })
   const unset = await vibePreflight({ targetRoot: a })
-  assert.equal(unset.ok, false)
-  assert.deepEqual(unset.needsUser.map((check) => check.name), ['push-target'])
+  assert.equal(unset.checks.find((check) => check.name === 'push-target').ok, true)
+  assert.equal(unset.checks.some((check) => check.name === 'push-permission'), false)
+  assert.deepEqual(unset.needsUser.filter((check) => check.name !== 'ci-access'), [])
+  assert.deepEqual(await vibePush({ targetRoot: a }), { schemaVersion: 1, ok: true, pushed: null, reason: 'push-disabled' })
   const { a: ready } = await machines(t)
   const result = await vibePreflight({ targetRoot: ready })
   assert.equal(result.checks.find((check) => check.name === 'push-permission').ok, true)

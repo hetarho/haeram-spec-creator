@@ -54,7 +54,8 @@ async function fetchBranch(root, remote, source, target) {
   }
 }
 
-// Where this checkout pushes finished units: cfg push, else nothing chosen yet.
+// Where this checkout pushes at the end of a session: cfg push names a branch the user chose.
+// Anything else (`-`, unset `?`, no cfg) commits only.
 export async function vibeSession(options = {}) {
   const workspace = await inspectWorkspace(options)
   if (!workspace.git?.head) fail('커밋이 있는 Git checkout이 필요합니다.')
@@ -84,8 +85,7 @@ export async function vibeMergeState([base, ours, theirs]) {
 export async function vibeSync(options = {}) {
   const context = await vibeSession(options)
   if (!context.remote) return { schemaVersion: 1, ok: true, action: 'none', reason: 'no-remote' }
-  if (context.push === '-') return { schemaVersion: 1, ok: true, action: 'none', reason: 'push-disabled' }
-  if (!context.target) fail('cfg push가 정해지지 않았습니다. start-vibe에서 push할 브랜치를 정하세요.')
+  if (!context.target) return { schemaVersion: 1, ok: true, action: 'none', reason: 'push-disabled' }
   const { root, remote, target } = context
   if (!(await fetchBranch(root, remote, `refs/heads/${target}`, `refs/remotes/${remote}/${target}`))) {
     return { schemaVersion: 1, ok: true, action: 'none', reason: 'remote-branch-missing', target }
@@ -114,8 +114,7 @@ export async function vibeSync(options = {}) {
 // Push HEAD to the push branch; a rejection means someone pushed first — sync and retry.
 export async function vibePush(options = {}) {
   const context = await vibeSession(options)
-  if (context.push === '-') return { schemaVersion: 1, ok: true, pushed: null, reason: 'push-disabled' }
-  if (!context.target) fail('cfg push가 정해지지 않았습니다. start-vibe에서 push할 브랜치를 정하세요.')
+  if (!context.target) return { schemaVersion: 1, ok: true, pushed: null, reason: 'push-disabled' }
   if (!context.remote) fail('push할 원격이 없습니다. cfg push를 -로 두거나 원격을 추가하세요.')
   let last
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -169,7 +168,7 @@ export async function vibeCheckpoint(options = {}) {
   const { root, remote } = context
   const local = `refs/heads/wip/${options.tag}`
   const tracking = remote ? `refs/remotes/${remote}/wip/${options.tag}` : null
-  if (remote && context.push !== '-') await fetchBranch(root, remote, `refs/heads/wip/${options.tag}`, tracking).catch(() => false)
+  if (remote && context.target) await fetchBranch(root, remote, `refs/heads/wip/${options.tag}`, tracking).catch(() => false)
   const known = []
   for (const ref of [local, tracking].filter(Boolean)) if (await exists(root, ref)) known.push(await sha(root, ref))
   let previous = known[0] ?? null
@@ -185,7 +184,7 @@ export async function vibeCheckpoint(options = {}) {
   const commit = (await git(root, ['commit-tree', tree, ...parents.flatMap((parent) => ['-p', parent]), '-m', message])).trim()
   await git(root, ['update-ref', local, commit])
   let pushed = false, pushError = null
-  if (remote && context.push !== '-') {
+  if (remote && context.target) {
     try { await git(root, ['push', '--quiet', remote, `${local}:refs/heads/wip/${options.tag}`]); pushed = true } catch (error) { pushError = error.stderr || error.message }
   }
   return { schemaVersion: 1, changed: true, commit, tree, branch: `wip/${options.tag}`, pushed, pushError }
@@ -295,7 +294,7 @@ export async function vibePreflight(options = {}) {
   const context = await vibeSession(options)
   const checks = []
   const add = (name, ok, detail, needsUser = false) => checks.push({ name, ok, detail, needsUser: !ok && needsUser })
-  add('push-target', context.push !== null && context.push !== '?', context.push === '-' ? 'commit only (cfg push: -)' : context.target ?? 'cfg push is not chosen', true)
+  add('push-target', true, context.target ?? 'commit only (no cfg push branch)')
   if (context.target) {
     if (!context.remote) add('remote', false, 'no git remote for cfg push', true)
     else {
@@ -317,7 +316,7 @@ export async function vibePreflight(options = {}) {
   add('keep-awake', process.platform !== 'darwin' || await which('caffeinate'), process.platform === 'darwin' ? 'caffeinate' : `${process.platform}: keep the machine awake yourself`)
   let workflows = false
   try { await access(path.join(context.root, '.github/workflows')); workflows = true } catch {}
-  if (workflows && context.push !== '-') {
+  if (workflows && context.target) {
     const gh = await execute('gh', ['auth', 'status'], { timeout: 10000 }).then(() => true, () => false)
     const repo = context.remote ? githubRepository(await git(context.root, ['remote', 'get-url', context.remote])) : null
     const token = (options.env ?? process.env).GITHUB_TOKEN ?? (options.env ?? process.env).GH_TOKEN
