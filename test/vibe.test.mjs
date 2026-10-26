@@ -216,6 +216,18 @@ test('route: 기획 거리·구현 거리에 따라 planning·implementation·ch
   assert.equal((await vibeStatus({ targetRoot: empty })).route, 'architecture')
 })
 
+test('route: 완료 ideation 파일은 새 기획 후보나 기본 읽기 입력이 아니다', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'haeram-ideation-route-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(path.join(root, 'spec/ideation/done'), { recursive: true })
+  await writeFile(path.join(root, 'spec/STATE.md'), STATE)
+  // The archived body is intentionally unusable; routing needs only active STATE rows.
+  await writeFile(path.join(root, 'spec/ideation/done/outline.md'), 'historical discussion without current planning metadata')
+  const status = await vibeStatus({ targetRoot: root })
+  assert.equal(status.route, 'implementation')
+  assert.deepEqual(status.planning.ideation, [])
+})
+
 test('vibe check는 같은 작업 트리에서 통과한 명령을 다시 돌리지 않는다', async (t) => {
   const { a, temporary } = await machines(t)
   const counter = path.join(temporary, 'runs.txt')

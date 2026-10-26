@@ -96,6 +96,29 @@ const REVIEW = `# REVIEW api-260906
 - -
 `
 
+const IDEATION_STATE = STATE.replace('## ssot\n', '## ideation\n| id | st |\n|---|---|\n| outline | ready@260906 |\n\n## ssot\n')
+const IDEATION = `# IDEATION outline
+> st:ready@260906 | clarify the project foundation
+
+## vision
+Keep project conventions explicit.
+
+## explored
+- [o] Write the foundation rules first ← a shared starting point
+- [x] Start with a separate tool ← outside this scope
+
+## shape
+- flow: discuss → document
+- v1: foundation / not: tooling
+
+## domains
+- [o] ARCH: foundation rules →ARCH
+
+## open
+- -
+`
+const CONVERTED_IDEATION = IDEATION.replace('st:ready@', 'st:converted@')
+
 async function writeFixture(
   root,
   {
@@ -104,6 +127,7 @@ async function writeFixture(
     tasks = { 'T002.api.md': T002 },
     done = { 'T001.scaffold.md': T001 },
     review = {},
+    ideation = {},
   } = {},
 ) {
   const specRoot = path.join(root, 'spec')
@@ -112,6 +136,11 @@ async function writeFixture(
   if (Object.keys(review).length > 0) await mkdir(path.join(specRoot, 'review'), { recursive: true })
   for (const [name, content] of Object.entries(review)) {
     await writeFile(path.join(specRoot, 'review', name), content)
+  }
+  for (const [name, content] of Object.entries(ideation)) {
+    const file = path.join(specRoot, 'ideation', name)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, content)
   }
   await writeFile(path.join(specRoot, 'STATE.md'), state)
   await writeFile(path.join(specRoot, 'FORMAT.md'), '# FORMAT\n')
@@ -300,6 +329,92 @@ test('파일 rev와 STATE rev 불일치는 오류, todo의 낡은 base는 경고
     const result = await lintSpec({ targetRoot: root })
     assert.ok(result.errors.some((e) => e.includes('rev(r2)') && e.includes('STATE rev(3)')))
     assert.ok(result.warnings.some((w) => w.includes('T002') && w.includes('base ARCH@2')))
+  })
+})
+
+test('ideation: open·ready는 미반영 도메인과 질문을 유지할 수 있다', async () => {
+  const partial = IDEATION.replace('## open', '- [o] DOC: documentation\n- [?] TOOL: optional tooling\n\n## open').replace('- -\n', '- Which tool is needed?\n')
+  for (const st of ['open', 'ready']) {
+    await withFixture({ state: IDEATION_STATE.replace('ready@', `${st}@`), ideation: { 'outline.md': partial.replace('ready@', `${st}@`) } }, async (root) => {
+      assert.deepEqual((await lintSpec({ targetRoot: root })).errors, [])
+    })
+  }
+})
+
+test('ideation: 전환 후 STATE 행 없이 보존하고 기존 inbox 참조도 유효하다', async () => {
+  const state = STATE.replace('## ssot', '## inbox\n- 260906 decided ideation/outline: Scope? → foundation (alt: tooling)\n- 260906 suggest ideation/done/outline: Review the earlier discussion.\n\n## ssot')
+  await withFixture({ state, ideation: { 'done/outline.md': CONVERTED_IDEATION } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.ok(!result.warnings.some((w) => w.includes('ideation')))
+  })
+})
+
+test('ideation: 반영 누락·미정·열린 질문을 converted로 보관할 수 없다', async () => {
+  const cases = [
+    [CONVERTED_IDEATION.replace(' →ARCH', ''), 'SSOT 매핑 없는'],
+    [CONVERTED_IDEATION.replace('## open', '- [o] DOC: another domain\n\n## open'), 'SSOT 매핑 없는'],
+    [CONVERTED_IDEATION.replace('## shape', '- [?] Decide the tool\n\n## shape'), '[?] 미정'],
+    [CONVERTED_IDEATION.replace('## open', '- [?] DOC: undecided scope\n\n## open'), '[?] 미정'],
+    [CONVERTED_IDEATION.replace('- -\n', '- What remains?\n'), '## open 질문'],
+    [CONVERTED_IDEATION.replace('[o] ARCH: foundation rules →ARCH', '[x] ARCH: foundation rules ← deferred'), '채택한 domains가 없습니다'],
+    [CONVERTED_IDEATION.replace('converted@260906', 'ready@260906'), 'st가 converted@가 아닙니다'],
+    [CONVERTED_IDEATION.replace('converted@260906', 'converted@yesterday'), 'st 형식 오류'],
+    [CONVERTED_IDEATION.replace('## shape', '## other'), '## shape 섹션이 없습니다'],
+    [CONVERTED_IDEATION.replace('[o] ARCH:', '[v] ARCH:'), 'domains 줄 형식 오류'],
+    [CONVERTED_IDEATION.replace('## open', '- [x] DOC: discarded\n\n## open'), '제외 이유'],
+  ]
+  for (const [content, expected] of cases) {
+    await withFixture({ ideation: { 'done/outline.md': content } }, async (root) => {
+      const result = await lintSpec({ targetRoot: root })
+      assert.equal(result.ok, false)
+      assert.ok(result.errors.some((e) => e.includes(expected)), `${expected}: ${result.errors.join('\n')}`)
+    })
+  }
+})
+
+test('ideation: 활성 매핑은 실제 SSOT를 가리키고 아카이브 매핑은 당시 기록이다', async () => {
+  await withFixture({ state: IDEATION_STATE, ideation: { 'outline.md': IDEATION.replace('→ARCH', '→MISC') } }, async (root) => {
+    assert.ok((await lintSpec({ targetRoot: root })).errors.some((e) => e.includes('→MISC') && e.includes('SSOT가 없습니다')))
+  })
+  await withFixture({ ideation: { 'done/outline.md': CONVERTED_IDEATION.replace('→ARCH', '→MISC') } }, async (root) => {
+    assert.deepEqual((await lintSpec({ targetRoot: root })).errors, [])
+  })
+})
+
+test('ideation: 아카이브와 STATE·활성 파일이 중복되면 오류다', async () => {
+  await withFixture({ state: IDEATION_STATE, ideation: { 'outline.md': IDEATION, 'done/outline.md': CONVERTED_IDEATION } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((e) => e.includes('STATE ideation 표에 동시에')))
+    assert.ok(result.errors.some((e) => e.includes('파일이 모두 있습니다')))
+  })
+  await withFixture({ state: IDEATION_STATE, ideation: { 'done/outline.md': CONVERTED_IDEATION } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.ok(result.errors.some((e) => e.includes('STATE ideation 표에 동시에')))
+  })
+})
+
+test('ideation: 기존 상태 없는 domains와 converted 문서는 이관할 수 있다', async () => {
+  const legacy = CONVERTED_IDEATION.replace('- [o] ARCH:', '- ARCH:')
+  await withFixture({ state: IDEATION_STATE.replace('ready@', 'converted@'), ideation: { 'outline.md': legacy } }, async (root) => {
+    const result = await lintSpec({ targetRoot: root })
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.warnings.some((w) => w.includes('ideation/done/') && w.includes('STATE 행')))
+  })
+  await withFixture({ ideation: { 'done/outline.md': legacy } }, async (root) => {
+    assert.deepEqual((await lintSpec({ targetRoot: root })).errors, [])
+  })
+})
+
+test('ideation: 활성 파일·STATE 누락과 상태 불일치를 진단한다', async () => {
+  await withFixture({ state: IDEATION_STATE, ideation: {} }, async (root) => {
+    assert.ok((await lintSpec({ targetRoot: root })).errors.some((e) => e.includes('ideation/outline.md 파일이 없습니다')))
+  })
+  await withFixture({ state: IDEATION_STATE, ideation: { 'stray.md': IDEATION } }, async (root) => {
+    assert.ok((await lintSpec({ targetRoot: root })).errors.some((e) => e.includes('stray.md이 STATE ideation 표에 없습니다')))
+  })
+  await withFixture({ state: IDEATION_STATE, ideation: { 'outline.md': IDEATION.replace('ready@', 'open@') } }, async (root) => {
+    assert.ok((await lintSpec({ targetRoot: root })).warnings.some((w) => w.includes('파일 st(open@') && w.includes('STATE st(ready@')))
   })
 })
 

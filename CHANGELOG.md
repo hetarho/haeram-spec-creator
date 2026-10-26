@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.5
+
+- Archive fully converted ideation documents under `spec/ideation/done/` and remove their STATE rows. Partial conversion stays ready; both create-ssot and update-ssot compare the adopted scope against the actual SSOTs before archiving. Preserve unresolved work in an active follow-up document.
+- Lint ideation status, skeletons, domain mappings, unresolved items and archive/STATE conflicts. Keep inbox references valid across archival, accept legacy unmarked domains as adopted, and warn when legacy converted documents still need moving. Archived discussions are historical records rather than current planning inputs.
+
 ## 0.7.3
 
 - Track runner integration failures and bounded transient retries by submission ID (or submitted commit), allowing repaired and reapproved attempts to integrate in the same run without repeatedly retrying a failed submission. Applies to Claude, Codex and command adapters.

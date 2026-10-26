@@ -1,7 +1,7 @@
 ---
 name: create-ssot
 description: >-
-  기획자 역할로 사용자를 인터뷰해 새 도메인 SSOT(spec/ssot/<ID>.md)를 작성한다. "기능 기획하자 /
+  기획자 역할로 사용자를 인터뷰해 새 도메인 SSOT(spec/ssot/)를 작성한다. "기능 기획하자 /
   스펙 만들어줘 / SSOT 작성 / ~기능 추가하고 싶어(아직 스펙 없음)" 일 때 사용. 기획 관점 질문만 한다
   (목적·타겟·범위·플로우·정책) — 기술 결정은 하지 않는다. 기존 SSOT 수정은 update-ssot,
   구현 분해는 create-task.
@@ -25,7 +25,7 @@ description: >-
 ## 1. 시작
 STATE 읽기 → log에 `- YYMMDD create-ssot <topic> start` → 기존 ssot/를 훑어 중복·연관 확인.
 같은 도메인이 이미 있으면 update-ssot로 전환을 제안한다.
-spec/ideation/에 st:ready 문서가 있으면 그것이 재료다(start-vibe가 기획 경로로 고른 open 문서도 — 이때 st를 ready로 바꾼다) — domains의 해당 줄과 vision·shape·explored를 읽고, 2단계 인터뷰는 문서의 공백과 [?]만 채운다. 전환을 마친 domains 줄에 →<ID>를 달고, 모든 [o] 도메인이 전환되면 문서 st→converted@YYMMDD + STATE ideation 행 갱신.
+spec/ideation/ 바로 아래 st:ready 문서가 재료다(start-vibe가 기획 경로로 고른 open 문서도 — 이때 문서·STATE st를 ready로 바꾼다). domains의 다음 미반영 채택 줄과 vision·shape·explored를 읽고, 2단계 인터뷰는 문서의 공백과 [?]만 채운다. ideation/done/은 기본 입력이 아니다. 같은 도메인이 이미 있으면 원본 ideation 경로·반영할 범위를 update-ssot로 함께 넘긴다.
 
 ## 2. 기획 인터뷰
 아래를 전부 결정으로 만들 수 있을 때까지 묻는다. 한 번에 2~4개씩. 이미 문서·대화에 답이 있으면 묻지 않는다.
@@ -62,3 +62,4 @@ level별 질문법:
 
 ## 4. 마감
 STATE: ssot 행 추가 `<ID> | 1 | 0 | all | <[?] 수>` / next에 `create-task <ID>` / log 1줄.
+ideation에서 시작했다면 [전환 마감 절차](references/ideation.md)를 수행한다 — 전체 범위를 SSOT와 대조하고, 일부 반영은 ready 유지, 전체 반영은 converted로 바꾸고 ideation/done/으로 이동·STATE 행 제거. SSOT·ideation·STATE 변경은 같은 기획 커밋에 담는다.

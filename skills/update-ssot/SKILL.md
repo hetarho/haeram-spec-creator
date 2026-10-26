@@ -23,6 +23,7 @@ description: >-
 
 ## 1. 시작
 STATE → 대상 SSOT 식별·정독 → log에 `- YYMMDD update-ssot <ID> start`.
+ideation에서 넘겨받은 변경이면 원본 활성 문서의 domains·vision·shape·explored를 읽고 반영 범위를 확인한다. open 문서를 기획으로 가져왔다면 문서·STATE st를 ready로 바꾼다. ideation/done/은 기본 입력이 아니다.
 입력이 doc-review가 넘긴 보류 항목(모순·공백·애매한 문장)이면 그 원문이 출발점이다. 함께 모드는 어느 쪽이 맞는지 확인받고, 맡김은 추천안으로 결정해 inbox decided에 선택·대안·이유를 남긴다. 단순 편집으로 모순을 감추지 않는다.
 
 ## 2. 변경 분석
@@ -48,4 +49,5 @@ STATE → 대상 SSOT 식별·정독 → log에 `- YYMMDD update-ssot <ID> start
 
 ## 4. 마감
 - STATE: ssot rev 갱신 + pending에 델타 추가(`AUTH-2✎ AUTH-5+` — 단 tasked=0이면 `all` 유지) + [?] 수 갱신, 영향권에 doing 태스크가 있으면 log에 경고 1줄, next에 `create-task <ID>` / log 1줄.
+- ideation에서 시작했다면 [전환 마감 절차](../create-ssot/references/ideation.md)를 수행한다 — 일부 반영은 ready 유지, 전체 반영은 converted로 바꾸고 ideation/done/으로 이동·STATE 행 제거. SSOT·ideation·STATE 변경은 같은 기획 커밋에 담는다.
 - 보고(level별): 바뀐 결정, 파급 범위, 다음 단계.

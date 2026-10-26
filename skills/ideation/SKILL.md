@@ -2,7 +2,7 @@
 name: ideation
 description: >-
   생각날 때마다 아이디어를 쏟아내는 곳. 기획 전문가와 함께 흐릿한 아이디어를 아이디에이션 문서
-  (spec/ideation/<slug>.md)로 받아 적고 구체화한다. "/ideation, 아이디어 있어, 이거 적어둬, 아이디어
+  (spec/ideation/)로 받아 적고 구체화한다. "/ideation, 아이디어 있어, 이거 적어둬, 아이디어
   구체화하자, 뭘 만들지 같이 고민해줘, 브레인스토밍, 이런 걸 만들고 싶은데(아직 막연함)" 일 때 사용.
   한 줄 아이디어는 받아 적고 끝내고, 원하면 끝났다고 할 때까지 발산·수렴 루프를 돈다. 쌓인 문서는
   /start-vibe가 기획(create-ssot)으로 가져간다. 요구가 이미 명확하면 바로 create-ssot.
@@ -25,9 +25,9 @@ description: >-
 
 ## 1. 시작
 - STATE 읽기 → log `- YYMMDD ideation <slug> start`. STATE에 `## ideation` 섹션(`| id | st |`)이 없으면 cfg 다음에 추가한다.
-- 이어하기: spec/ideation/에 st:open 문서가 있고 같은 주제면 그 문서로 계속한다. 새 주제면 새 파일.
+- 이어하기: spec/ideation/ 바로 아래 open/ready 문서가 같은 주제면 이어 쓴다. ready의 채택 범위를 다시 논의하면 문서·STATE를 open으로 되돌리고, 바뀐 범위의 전환 화살표를 재검토한다. ideation/done/은 특정 과거 논의를 조사할 때만 연다. 완료 문서를 다시 활성화하지 않고 후속 아이디어는 새 파일로 만든다.
 - **받아 적기**: 아이디어를 남겨 두려는 요청("이거 적어둬", 한두 줄 아이디어)이면 같은 주제의 open 문서 explored에 `[?]`로, 없으면 새 문서의 vision·explored에 받아 적고 5단계로 마감한다. 루프는 사용자가 더 이야기하고 싶을 때만 돈다. start-vibe 맡김 모드에서 넘어온 아이디어도 받아 적기만 한다.
-- 새 문서: 이 스킬 폴더의 assets/ideation.md를 `spec/ideation/<slug>.md`(slug=영문 kebab)로 복사해 채우고, STATE ideation 행 `<slug> | open@YYMMDD`.
+- 새 문서: 이 스킬 폴더의 assets/ideation.md를 `spec/ideation/<slug>.md`(slug=영문 kebab, 활성·done 양쪽에 중복 금지)로 복사해 채우고, STATE ideation 행 `<slug> | open@YYMMDD`.
 
 ## 2. 구체화 루프 (사용자가 끝났다고 할 때까지)
 한 라운드 = 질문·제안 2~4개 → 답 → **문서 즉시 갱신** → cfg.lang으로 짧은 현재 상태 요약. 이걸 반복한다.
@@ -42,13 +42,14 @@ level별: expert=전략 갈림길을 직설 선택지로 / mid=선택지+영향 
 - `## vision` — 문제·타겟·핵심 가치 (다듬어질 때마다 갱신)
 - `## explored` — 논의한 방향들: [o] 채택 / [x] 폐기 ←이유 / [?] 미정
 - `## shape` — 수렴된 모습: 핵심 플로우, v1 경계(포함/제외)
-- `## domains` — SSOT 전환 지도: `- <ID 후보>: 재료 요약` (전환되면 →<ID> 표시)
-- `## open` — 아직 못 정한 질문들
+- `## domains` — SSOT 전환 지도: `- [o|x|?] <ID 후보>: 재료 요약`. 채택 [o] / 제외 [x] ← 이유 / 미정 [?]. 기존 상태 없는 줄은 [o]로 취급한다. 해당 줄의 채택 범위가 전부 반영된 뒤 →<ID> 표시(여러 SSOT면 화살표 여러 개).
+- `## open` — 아직 못 정한 질문들, 없으면 `- -`
 
 ## 4. 수렴 판정
 vision·shape·domains가 채워지면 "SSOT로 전환할 준비가 된 것 같다"고 **제안**한다 — 사용자가 더 다듬고 싶으면 루프를 계속한다.
 사용자가 동의하면: 문서 st→`ready@YYMMDD`, STATE ideation 행 갱신, next에 `create-ssot <첫 도메인 후보>`.
 start-vibe가 기획 경로로 open 문서를 고르면 그 선택이 수렴 동의다 — 남은 공백은 create-ssot 인터뷰가 채운다.
+ready는 SSOT 반영 완료가 아니다. 일부만 반영했으면 ready로 두고 남은 도메인을 next에 둔다. 새 SSOT 작성·기존 SSOT 수정이 끝나면 해당 기획 스킬이 [전환 마감 절차](../create-ssot/references/ideation.md)로 전체 반영을 확인한 뒤 converted로 바꾸고 done/으로 이동한다. STATE에는 open/ready만 남긴다.
 
 ## 5. 마감 (세션이 끝날 때마다)
 - 문서가 대화 내용을 전부 반영했는지 확인 — 문서에 없는 합의는 없던 것이 된다.

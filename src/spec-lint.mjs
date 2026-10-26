@@ -7,6 +7,8 @@ import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
 const DOMAIN_ID = /^[A-Z]{2,6}$/
 const DOC_ST = /^(open|ready|converted)@\d{6}$/ // ideation · review
+const IDEATION_SECTIONS = ['vision', 'explored', 'shape', 'domains', 'open']
+const IDEATION_DOMAIN = /^-\s+(?:\[(o|x|\?)\]\s+)?([A-Z]{2,6}):\s+\S/
 const FINDING_LINE = /^-\s+F(\d+)\s+\[(o|x|\?)\]\s+P[123]\s+\S/
 const LEVELS = new Set(['expert', 'mid', 'novice', '?'])
 const SSOT_SECTIONS = ['decisions', 'flow', 'constraints', 'chg']
@@ -119,6 +121,49 @@ function cfgValues(lines = []) {
     if (match) map.set(match[1], match[2].trim())
   }
   return map
+}
+
+function ideationChecks({ content, file, archived, ssotInfo, errors, warnings }) {
+  const st = quoteFields(quoteLine(content) ?? '').get('st')
+  const converted = /^converted@\d{6}$/.test(st ?? '')
+  if (!DOC_ST.test(st ?? '')) errors.push(`${file}: st 형식 오류: ${st ?? '(없음)'} (open|ready|converted@날짜)`)
+  if (archived && !converted) errors.push(`${file}: 아카이브된 ideation의 st가 converted@가 아닙니다.`)
+  if (!archived && converted) warnings.push(`${file}: converted 문서는 반영 범위 확인 후 ideation/done/으로 이동하고 STATE 행을 제거하세요.`)
+  const parts = sections(content)
+  for (const name of IDEATION_SECTIONS) {
+    if (!parts.has(name)) errors.push(`${file}: ## ${name} 섹션이 없습니다.`)
+  }
+  let adopted = 0, unmapped = 0
+  for (const line of parts.get('domains') ?? []) {
+    if (!line.trim() || ['-', '- -'].includes(line.trim())) continue
+    const domain = line.match(IDEATION_DOMAIN)
+    if (!domain) {
+      errors.push(`${file}: domains 줄 형식 오류: "${line.trim().slice(0, 60)}" (- [o|x|?] ID: summary)`)
+      continue
+    }
+    const status = domain[1] ?? 'o' // Legacy unmarked domains were adopted scope.
+    if (status === 'x' && !/←\s*\S/.test(line)) errors.push(`${file}: [x] 도메인 ${domain[2]}에 제외 이유(←)가 없습니다.`)
+    const refs = [...line.matchAll(/→([A-Z]{2,6})(?![\w-])/g)].map((match) => match[1])
+    // Archived mappings describe completion-time history, not today's domain set.
+    if (!archived) for (const ref of refs) {
+      if (!ssotInfo.get(ref)?.doc) errors.push(`${file}: 매핑 →${ref}의 SSOT가 없습니다.`)
+    }
+    if (status === 'o') {
+      adopted += 1
+      if (refs.length === 0) unmapped += 1
+    }
+  }
+  if (converted) {
+    if (adopted === 0) errors.push(`${file}: converted인데 채택한 domains가 없습니다.`)
+    if (unmapped > 0) errors.push(`${file}: converted인데 SSOT 매핑 없는 채택 도메인이 ${unmapped}개 있습니다.`)
+    if (['explored', 'domains'].some((name) => (parts.get(name) ?? []).some((line) => /^\s*-\s+\[\?\]/.test(line)))) {
+      errors.push(`${file}: converted인데 [?] 미정 항목이 남아 있습니다 — 해결하거나 별도 활성 ideation으로 분리하세요.`)
+    }
+    if ((parts.get('open') ?? []).some((line) => line.trim() && !['-', '- -'].includes(line.trim()))) {
+      errors.push(`${file}: converted인데 ## open 질문이 남아 있습니다 — 질문이 없으면 '- -'로 비우세요.`)
+    }
+  }
+  return st
 }
 
 // References between decisions (FORMAT reference notation). A typed reference (→! →= →~) is an
@@ -514,6 +559,8 @@ export async function lintSpec({ targetRoot } = {}) {
   const ideationRows = stateSections.has('ideation') ? tableRows(stateSections.get('ideation')) : []
   const ideationIds = new Set(ideationRows.map((row) => row[0]))
   const ideationFiles = (await listIfExists(path.join(specRoot, 'ideation'))).filter((f) => f.endsWith('.md'))
+  const ideationDoneFiles = (await listIfExists(path.join(specRoot, 'ideation', 'done'))).filter((f) => f.endsWith('.md'))
+  const ideationState = new Map(ideationRows.map(([id, st]) => [id, st]))
   for (const row of ideationRows) {
     const [id, st] = row
     if (!DOC_ST.test(st ?? '')) errors.push(`ideation ${id}: st 형식 오류: ${st} (open|ready|converted@날짜)`)
@@ -525,6 +572,16 @@ export async function lintSpec({ targetRoot } = {}) {
       const target = stateSections.has('ideation') ? errors : warnings
       target.push(`ideation/${file}이 STATE ideation 표에 없습니다.`)
     }
+    const content = await readFile(path.join(specRoot, 'ideation', file), 'utf8')
+    const st = ideationChecks({ content, file: `ideation/${file}`, archived: false, ssotInfo, errors, warnings })
+    if (ideationState.has(id) && ideationState.get(id) !== st) warnings.push(`ideation ${id}: 파일 st(${st})와 STATE st(${ideationState.get(id)})가 다릅니다.`)
+  }
+  for (const file of ideationDoneFiles) {
+    const id = file.replace(/\.md$/, '')
+    if (ideationIds.has(id)) errors.push(`ideation ${id}: done/ 아카이브와 STATE ideation 표에 동시에 있습니다 — 완료 행은 삭제하세요.`)
+    if (ideationFiles.includes(file)) errors.push(`ideation ${id}: ideation/과 ideation/done/에 파일이 모두 있습니다.`)
+    const content = await readFile(path.join(specRoot, 'ideation', 'done', file), 'utf8')
+    ideationChecks({ content, file: `ideation/done/${file}`, archived: true, ssotInfo, errors, warnings })
   }
 
   // review (optional)
@@ -629,7 +686,7 @@ export async function lintSpec({ targetRoot } = {}) {
       } else if (TASK_ID.test(ref)) {
         if (!taskIds.has(ref) && !doneIds.has(ref)) errors.push(`inbox: ${ref}가 tasks 표에도 tasks/done/에도 없습니다.`)
       } else if (doc) {
-        const files = doc[1] === 'review' ? reviewFiles : ideationFiles
+        const files = doc[1] === 'review' ? reviewFiles : [...ideationFiles, ...ideationDoneFiles, ...ideationDoneFiles.map((file) => `done/${file}`)]
         if (!files.includes(`${doc[2]}.md`)) errors.push(`inbox: ${ref} 문서가 없습니다.`)
       } else errors.push(`inbox: 알 수 없는 참조: ${ref} (<ID>-n|T###|review/<slug>|ideation/<slug>|-)`)
     }

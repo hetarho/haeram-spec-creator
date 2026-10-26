@@ -14,7 +14,7 @@
 - v1: <in> / not: <out>
 
 ## domains
-- <SSOT ID candidate>: <material summary>
+- [o] <SSOT ID candidate>: <material summary>
 
 ## open
 - <unresolved question>

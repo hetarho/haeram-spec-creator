@@ -40,7 +40,8 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 spec/
 ├── STATE.md      # 관제탑: cfg(사용자 수준·push 브랜치) · 실행 중 세션(active) · 결정함(inbox) · SSOT rev 현황 · 태스크 보드 · next · log
 ├── FORMAT.md     # 모든 spec 문서의 압축 표기 규칙 (ID, 기호, 골격, 상태 규칙)
-├── ideation/     # (선택) 아이디어 구체화 문서 — ready가 되면 create-ssot의 재료
+├── ideation/     # (선택) 활성 아이디어 — open(구체화 중), ready(SSOT 반영 대기·진행 중)
+│   └── done/     # 전체 SSOT 반영을 확인한 converted 문서 보존 — STATE에서는 제거
 ├── ssot/         # 도메인별 SSOT — 결정([o]/[?]/[x])과 근거만, rev로 변경 추적
 ├── review/       # (선택) 코드 리뷰 finding — 채택([o])된 것이 ready가 되면 create-task의 재료
 ├── reports/      # (선택) 맡김 세션 보고서 — 한 일·잠정 결정·주차한 일·검증 결과 (owner가 읽는 사용자 언어)
@@ -49,6 +50,8 @@ spec/
 ```
 
 `tasks/done/`은 **당시의 의도와 실제 구현·검증을 비교할 수 있는 역사 기록**입니다. 평가와 회귀 조사를 위해 보존하지만, 현재 규칙의 근거는 아닙니다(`st`·`base`는 완료 시점의 값입니다). 그래서 일반 구현 작업은 완료 태스크를 기본 입력으로 읽지 않고, 특정 태스크·회귀 원인·이전 검증 방법을 조사할 때만 해당 파일을 골라 엽니다. 지금도 지켜야 하는 계약이 완료 태스크에만 남아 있다면 그건 SSOT로 올라가야 할 신호입니다.
+
+ideation은 `open`(구체화 중) → `ready`(SSOT 반영 대기·진행 중) → `converted`(채택 범위 전체 반영)로 구분합니다. create-ssot·update-ssot는 실제 SSOT와 반영 범위를 대조하고, 모든 채택 도메인에 매핑이 있고 미정·열린 질문이 처리됐을 때만 `ideation/done/`으로 옮기며 STATE 행을 제거합니다. 일부만 반영했으면 `ready`로 유지합니다. 완료 문서는 과거 논의 조사에만 사용하며 현재 규칙은 SSOT에서 읽습니다. 기존 converted 문서도 같은 확인 후 이동하고, 예전 domains의 상태 없는 줄은 채택으로 취급합니다. 프로젝트 FORMAT에는 설치된 템플릿의 ideation 골격·State rules·Reading 규칙을 이관하세요.
 
 SSOT의 `rev`(현재 개정)와 STATE의 `tasked`(태스크로 소화된 개정)의 차이가 곧 "아직 구현 계획에 반영되지 않은 기획 변경"입니다. 그래서 어느 세션에서든 "SSOT 변경사항 태스크로 쪼개줘"라고만 해도 에이전트가 무엇이 어떻게 바뀌었는지 스스로 찾아냅니다.
 
