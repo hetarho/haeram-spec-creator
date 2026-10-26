@@ -93,7 +93,7 @@ Claude Code나 Codex를 설치하려는 프로젝트에서 열고 다음 프롬�
 2. **질문은 한 번에** 합니다: 모드(함께/맡김), 기획 거리와 구현 거리가 둘 다 있으면 무엇부터, 다른 기기가 진행 중이면 이어받을지, push할 브랜치가 정해지지 않았으면 어디로.
 3. 맡김이면 사용자가 떠나기 전에 점검합니다(`vibe preflight`: push 권한·lint·절전 방지·CI 접근, 작업 묶음이면 헤드리스 워커의 명령 실행 권한 실측). 정할 것이 있으면 이때 한 번 더 묻고, 그 뒤로는 묻지 않습니다.
 4. STATE를 보고 다음 일을 고릅니다 — 아무것도 없으면 `/ideation`으로 안내, 전환 안 된 아이디어가 있으면 기획(create-ssot → create-task), 태스크·변경분이 있으면 구현(implement-task). 태스크는 기본적으로 메인 세션에서 하나씩 진행하고, 독립 줄기가 충분히 클 때만 작업 묶음으로 병렬 처리합니다.
-5. 태스크마다 커밋합니다. 혼자서는 기본 3개 또는 기획 조각 소진·세션 끝에 묶음 검증 후 cfg `push` 브랜치로 push합니다. 다른 세션이 보이면 선점 커밋·push와 원격 판정을 먼저 하고 단위마다 push합니다. 1시간 넘는 작업은 `wip/<tag>`로 스냅샷을 올립니다.
+5. 태스크마다 커밋합니다. 혼자서는 기본 3개 또는 기획 조각 소진·세션 끝에 묶음 검증 후 cfg `push` 브랜치로 push합니다. 다른 세션이 보이면 선점 커밋·push와 원격 판정을 먼저 하되, 완료 코드는 기본으로 모아서 조정자가 최종 검증 뒤 push합니다. 1시간 넘는 작업은 `wip/<tag>`로 스냅샷을 올립니다.
 
 | 모드 | 결정 | 사용자가 없을 때 |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ npx haeram-spec-creator@0.6.0 vibe loop --tag k3f9 --stop --json
 
 맡김은 되돌릴 수 있는 기획·기술 판단을 추천안으로 결정하고 STATE inbox decided에 근거를 남깁니다. 구현이 판단 문제로 막히면 새 기획 단위로 해소하고 재개하며, 이미 승인된 작업을 앞당겨야 할 때도 실제 의존성을 확인해 순서를 조정합니다. CI 실패는 근거가 담긴 수정 태스크를 만들고 다음 단위로 우선 실행합니다. 실제 권한 부재나 과금·데이터 삭제·개인정보·보안 정책·되돌리기 어려운 외부 작업은 해당 건만 주차하고 다른 작업을 계속합니다. 시간·단위·반복 실패 제한은 그대로 적용하며, 한도에 닿으면 `loop.json`과 보고서에 우선 재개할 태스크를 남깁니다.
 
-태스크마다 추가·변경·영향 단위 테스트와 타입·린트·포맷 검사만 실행합니다. 통합·e2e·전체 스위트는 설정된 대상 브랜치로 코드 묶음을 push하기 직전 또는 전체 작업 완료 시 한 번 실행하며, CI도 실제 코드 push 묶음당 한 번만 기다립니다. 태스크 커밋·WIP 체크포인트·단위 세션 종료는 전체 검사 경계가 아닙니다. 테스트는 스크립트 이름이 아닌 격리 범위·의존성으로 분류하며, 미실행 검사는 result limits에 남겨 묶음 관문에서 확인합니다. ARCH의 task/batch/CI 하위 줄도 이 단계에 맞춥니다. legacy ARCH의 batch는 package.json의 verify/test 스크립트, 또는 명시적 `--verify '<command>'`를 사용합니다. 검증 없는 코드 push는 중단합니다.
+태스크마다 추가·변경·영향 단위 테스트와 타입·린트·포맷 검사만 실행합니다. 통합·e2e·전체 스위트는 조정자/loop 호스트 하나만 최종 통합 후보에서 대상 브랜치 push 직전(커밋만 남기면 조정자의 전체 완료 관문)에 한 번 실행하며, CI도 실제 코드 push 묶음당 한 번만 기다립니다. 태스크 커밋·WIP 체크포인트·단위 세션 종료는 전체 검사 경계가 아닙니다. 테스트는 스크립트 이름이 아닌 격리 범위·의존성으로 분류하며, 미실행 검사는 result limits에 남겨 묶음 관문에서 확인합니다. ARCH의 task/batch/CI 하위 줄도 이 단계에 맞춥니다. legacy ARCH의 batch는 package.json의 verify/test 스크립트, 또는 명시적 `--verify '<command>'`를 사용합니다. 검증 없는 코드 push는 중단합니다. 구현·리뷰·위임된 세션은 종료 때 브라우저/e2e를 시작하지 않고 실행 대상과 근거를 조정자에게 넘깁니다. batch/group 검사는 clone 공용 락과 성공 기록을 공유하며, 같은 후보의 동시 요청은 한 번만 실행합니다. `vibe push --verified-commit <SHA>`는 원격 sync 뒤 코드가 달라지면 push를 거절합니다. 기존 ARCH와 활성 묶음도 범위를 보존하며 task=빠른 검사, unit=빠른 통합 검사, group=최종 통합/e2e로 이관합니다. 별도 요청이 없으면 이 흐름이 start-vibe의 기본입니다. 단위별 loop push는 `--push-each-unit`, 위임된 세션의 별도 최종 검증은 `--allow-final`로 명시합니다.
 
 ```bash
 npx haeram-spec-creator@0.6.0 vibe brief T200 --json
@@ -293,8 +293,9 @@ npx haeram-spec-creator install --force
 npx haeram-spec-creator vibe status --tag k3f9        # 다른 기기의 세션·남은 일·추천 경로
 npx haeram-spec-creator vibe brief T012                # 태스크가 기대는 결정 블록·전역 규칙·flow·constraints·stale base 이후 chg
 npx haeram-spec-creator vibe push                     # 원격을 합치고(STATE는 섹션 단위) cfg push 브랜치로 push
+npx haeram-spec-creator vibe claim --tag a1b2 --task T001 # 선점 정보만 공유하고 미검증 로컬 코드는 남김
 npx haeram-spec-creator vibe checkpoint --tag k3f9    # 작업 트리 스냅샷을 wip/k3f9로 (현재 브랜치는 그대로)
-npx haeram-spec-creator vibe check --heavy -- pnpm run test:e2e   # 같은 트리에서 통과한 검사는 생략, 무거운 검사는 하나씩
+npx haeram-spec-creator vibe check --tier batch -- pnpm run test:e2e   # 같은 트리에서 통과한 검사는 생략, 무거운 검사는 하나씩
 npx haeram-spec-creator vibe preflight --probe 'pnpm run test' --allow-tool 'Bash(pnpm run *)'
 ```
 
@@ -336,7 +337,7 @@ npx haeram-spec-creator work claim T042 --work login --owner agent-a --json
 # 워커는 코드와 자기 태스크의 acceptance/result를 작성하고 커밋
 # 실제 실행 ID를 변수에 넣은 뒤 검증·제출 (예: npm 프로젝트)
 ATTEMPT_ID='claim이 반환한 id'
-# --verify는 선택: 이 태스크가 추가·영향을 준 테스트만 (전체 스위트는 integrate/finish가 실행)
+# --verify는 선택: 이 태스크의 영향 단위 테스트만 (최종 통합/e2e는 조정자 finish 관문)
 npx haeram-spec-creator work submit --attempt "$ATTEMPT_ID" --verify 'npx vitest run src/login' --json
 
 # 리뷰어가 고정된 제출물을 선점하고 review-task로 검토
@@ -347,7 +348,7 @@ npx haeram-spec-creator work review-finish --review "$REVIEW_ID" --result-file /
 
 # 승인된 변경을 별도 후보에서 재검증하고 상위 브랜치에 반영
 # 후보 worktree에는 의존성이 없으므로 필요한 설치도 명시
-npx haeram-spec-creator work integrate --attempt "$ATTEMPT_ID" --verify 'npm ci && npm test' --json
+npx haeram-spec-creator work integrate --attempt "$ATTEMPT_ID" --verify 'npm ci && npm run lint' --json
 
 # 모든 단위가 통합되면 묶음 전체 검증을 한 번 실행하고 검증 커밋을 기록
 npx haeram-spec-creator work finish --work login --verify 'npm ci && npm run ci' --json
@@ -398,7 +399,7 @@ T001 (기반) → lane:a [T002 → T003 → T004]
 
 - 줄기 하나가 배정·리뷰·통합의 단위입니다. 한 작업자가 한 worktree에서 줄기의 태스크를 순서대로 구현하며, 줄기 안의 dep은 통합을 기다리지 않습니다. 줄기의 마지막 태스크까지 구현한 뒤 `submit`을 한 번 하면 완료된 태스크 전부가 기록되고 리뷰 대기(`ready`)가 됩니다. 태스크마다 제출해도 되며, 그때는 같은 공간에 다음 `taskId`를 돌려줍니다.
 - 줄기는 바깥 dep이 모두 통합된 뒤에만 시작하므로 줄기 도중에 다른 줄기를 기다리며 멈추지 않습니다. 두 줄기가 서로의 태스크를 기다리면(T009(c)→T005(b), T006(b)→T009(c)) `lint`와 `work board`가 `lane 순환` 오류를 내고 배정을 거부합니다. 공통 선행은 기반으로, 소비 태스크는 통합 단계로 옮기거나 줄기를 합칩니다.
-- 검증은 세 단계입니다. **태스크**: 그 태스크가 추가·수정·영향을 준 테스트만 실행합니다. **단위**: 줄기마다 통합할 때 전체 테스트를 한 번 실행합니다. **묶음**: 모든 통합 뒤 최종 검증을 한 번 실행합니다. 명령은 `work start`(또는 `work configure`)의 `--task-verify`·`--verify`·`--group-verify`로 묶음에 저장하고, 각 명령에는 `HAERAM_TIER`·`HAERAM_DIFF_BASE`·`HAERAM_TASK(S)`가 전달됩니다. 예를 들어 태스크 단계를 `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 두면 호스트가 영향받는 테스트를 직접 실행합니다.
+- 검증은 세 단계입니다. **태스크**: 그 태스크가 추가·수정·영향을 준 테스트만 실행합니다. **단위**: 줄기마다 통합할 때 빠른 검사만 실행합니다. **묶음**: 모든 통합 뒤 최종 검증을 한 번 실행합니다. 명령은 `work start`(또는 `work configure`)의 `--task-verify`·`--verify`·`--group-verify`로 묶음에 저장하고, 각 명령에는 `HAERAM_TIER`·`HAERAM_DIFF_BASE`·`HAERAM_TASK(S)`가 전달됩니다. 예를 들어 태스크 단계를 `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 두면 호스트가 영향받는 테스트를 직접 실행합니다.
 - 상위 브랜치가 바뀌어도 바뀐 파일이 제출물의 변경이나 SSOT와 겹치지 않으면 리뷰 승인이 유지됩니다. 줄기 여러 개를 연달아 통합해도 재리뷰가 반복되지 않습니다.
 
 ### 세션 여러 개로 진행하기 (터미널·Orca)
@@ -432,12 +433,12 @@ npx haeram-spec-creator work next --work feature --owner worker-a --wait 540 --j
 
 수정 요청이 있으면 resume로 먼저 처리합니다. 리뷰 대기가 max-pending에 도달하면 새 배정을 멈춥니다. 태스크 인용줄에 선택 필드 `touches:src/auth/ prisma/schema.prisma`를 적으면 겹치는 영역은 통합/해제될 때까지 직렬화합니다. 생략은 영향 범위가 알려지지 않았다는 뜻입니다. claimable은 보드의 후보 표시이며, 실제 배정은 용량·적체·신선도를 다시 검사합니다.
 
-`work run`은 설치된 Codex·Claude CLI로 빈 워커 슬롯 보충, 줄기의 다음 태스크를 같은 공간에 이어 배정, 완료 후 검증·리뷰, 수정 재배정, 승인 후 직렬 통합, 묶음 완료 검증까지 수행합니다. `--task-verify`(선택, 태스크마다 빠른 검사)·`--verify`(단위 통합마다 전체 테스트)·`--group-verify`(선택, 마지막에 한 번)로 단계를 나눕니다. 작업자와 리뷰어의 도구를 다르게 지정할 수 있습니다.
+`work run`은 설치된 Codex·Claude CLI로 빈 워커 슬롯 보충, 줄기의 다음 태스크를 같은 공간에 이어 배정, 완료 후 검증·리뷰, 수정 재배정, 승인 후 직렬 통합, 묶음 완료 검증까지 수행합니다. `--task-verify`(선택, 태스크마다 빠른 검사)·`--verify`(단위 통합마다 빠른 검사)·`--group-verify`(조정자의 마지막 통합/e2e 관문)로 단계를 나눕니다. 작업자와 리뷰어의 도구를 다르게 지정할 수 있습니다.
 
 ```bash
 npx haeram-spec-creator work doctor --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --dry-run --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm run lint' --group-verify 'npm ci && npm run ci' --dry-run --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm run lint' --group-verify 'npm ci && npm run ci' --json
 ```
 
 doctor와 dry-run은 모델을 호출하지 않습니다. `--autopilot`이면 사람이 없다는 전제로 돕니다 — 기획 결정이 필요한 워커는 결정 요청을 남기고 다른 단위가 계속되며, 조정자 세션(`work next --coordinator --autopilot`)이 잠정 결정해 `work update --status doing --note`로 재개하면 실행기가 기획 브랜치를 합치고 **같은 세션**을 이어 실행합니다. 같은 lane의 다음 태스크와 수정도 세션을 이어 쓰고, 워커에게는 태스크·인용 결정·검증 명령을 묶은 브리핑(`work brief`)을 넘깁니다. timeout 전에는 작업 공간을 스냅샷하고 진행분을 커밋해 이어 가며, macOS에서는 실행 중 절전을 막습니다. 새 worktree에는 프로젝트의 권한 허용 목록이 적용되지 않으므로 워커가 실행할 명령은 `--allow-tool`로 묶음에 저장합니다. provider를 생략하면 호환되는 Codex, Claude 순으로 선택하며, reviewer-provider를 생략하면 같은 도구를 사용합니다. 모델은 각 CLI 기본 설정을 사용하거나 `--model`·`--reviewer-model`로 지정합니다. CLI 로그인과 모델 접근 권한은 별도 준비가 필요합니다. 기본 어댑터의 워커는 파일을 편집하고, 호스트가 계약·변경 범위를 검사한 뒤 커밋·검증·제출합니다.
@@ -449,7 +450,7 @@ doctor와 dry-run은 모델을 호출하지 않습니다. `--autopilot`이면 �
 ```sh
 npx haeram-spec-creator work start feature --workers 6 --reviewers 1 --max-pending 12 --json
 # Claude만 실행하려면 --provider claude, Codex만 실행하려면 --provider codex
-npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm test' --json
+npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm run lint' --group-verify 'npm test' --json
 ```
 
 혼합 목록은 슬롯에 반복 배정합니다. `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개와 Claude 4개가 됩니다. 모델을 생략하면 각 CLI의 설정을 사용하며, 도구별 모델은 [adapter workers 설정](skills/manage-work/references/runner.md#단일-도구와-혼합-워커)에 지정합니다. 리뷰어는 워커 6개와 별도로 실행됩니다.

@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { inspectWorkspace, git } from './workspace.mjs'
 import { runtimeRoot } from './work-runtime.mjs'
 import { sections, tableRows, quoteLine, quoteFields, exploreValue, INBOX_LINE, SESSION_TAG, TASK_ID } from './spec-format.mjs'
-import { activeRows, upsertActive, mergeState } from './state-doc.mjs'
+import { activeRows, upsertActive, mergeState, parseState, renderState } from './state-doc.mjs'
 import { workingTree, checkKey, cachedPass, recordPass, withHeavyLock } from './check-cache.mjs'
 import { lintSpec } from './spec-lint.mjs'
 import { workInternals } from './work-groups.mjs'
@@ -119,11 +119,16 @@ export async function vibePush(options = {}) {
   let last
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const synced = await vibeSync(options)
+    const pushed = await sha(context.root, 'HEAD')
+    if (options.verifiedCommit) {
+      const verified = await sha(context.root, options.verifiedCommit)
+      const changed = (await git(context.root, ['diff', '--name-only', verified, pushed])).trim().split('\n').filter((file) => file && !/^spec\/(?:STATE\.md$|reports\/|tasks\/|work\/)/.test(file))
+      if (changed.length) fail('최종 검증 이후 코드가 변경됐습니다. 원격을 합친 현재 결과를 다시 검증한 뒤 push하세요.', changed)
+    }
     try {
       const tracking = `refs/remotes/${context.remote}/${context.target}`
       const diffBase = options.diffBase ?? (await exists(context.root, tracking) ? await sha(context.root, tracking) : undefined)
-      await git(context.root, ['push', '--quiet', context.remote, `HEAD:refs/heads/${context.target}`])
-      const pushed = await sha(context.root, 'HEAD')
+      await git(context.root, ['push', '--quiet', context.remote, `${pushed}:refs/heads/${context.target}`])
       const result = { schemaVersion: 1, ok: true, pushed, diffBase, target: context.target, remote: context.remote, attempts: attempt, sync: synced.action }
       if (options.waitCi) {
         try { result.ci = await vibeCIWait({ ...options, diffBase, commit: pushed, branch: context.target }); result.ok = result.ci.ok }
@@ -136,6 +141,55 @@ export async function vibePush(options = {}) {
     }
   }
   return fail('push하지 못했습니다.', [last])
+}
+
+// Publish only this session's claim on the remote's tree, never pending local code.
+// Merging the receipt back makes later task-row removal a normal three-way merge.
+export async function vibeClaim(options = {}) {
+  if (!SESSION_TAG.test(options.tag ?? '') || (options.task && !TASK_ID.test(options.task))) fail('claim에는 --tag와 선택적 --task T###가 필요합니다.')
+  const context = await vibeSession(options)
+  if (!context.target) return { schemaVersion: 1, ok: true, pushed: null, reason: 'push-disabled' }
+  if (!context.remote) fail('선점을 push할 원격이 없습니다.')
+  if ((await git(context.root, ['status', '--porcelain'])).trim()) fail('선점 전에 로컬 변경을 커밋하세요.')
+  const row = activeRows(context.state ?? '').find((entry) => entry.tag === options.tag)
+  if (!row) fail('선점 전에 vibe beat로 세션을 등록하세요.')
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'haeram-claim-'))
+  const tracking = `refs/remotes/${context.remote}/${context.target}`
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(temporary, 'index') }
+  const indexGit = async (args) => (await execute('git', ['-C', context.root, ...args], { env, encoding: 'utf8' })).stdout.trim()
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!await fetchBranch(context.root, context.remote, `refs/heads/${context.target}`, tracking)) fail('원격 대상 브랜치가 없습니다. 먼저 기획 기준을 공유하세요.')
+      const parent = await sha(context.root, tracking)
+      const remoteState = await git(context.root, ['show', `${parent}:spec/STATE.md`])
+      const blocks = parseState(remoteState)
+      if (options.task) {
+        const tasks = blocks.find((block) => block.name === 'tasks')
+        const index = tasks?.body.findIndex((line) => line.split('|')[1]?.trim() === options.task) ?? -1
+        if (index < 0) fail('원격에 선점할 태스크가 없습니다. 기획 기준을 먼저 공유하세요.', [options.task])
+        const cells = tasks.body[index].split('|').slice(1, -1).map((cell) => cell.trim())
+        if (cells[4] !== 'todo' && !cells[4]?.endsWith(`.${options.tag}`)) fail('다른 세션이 선점했거나 실행할 수 없는 태스크입니다.', [options.task, cells[4]])
+        cells[4] = `doing@${new Date().toISOString().slice(2, 10).replaceAll('-', '')}.${options.tag}`
+        tasks.body[index] = `| ${cells.join(' | ')} |`
+      }
+      const state = upsertActive(renderState(blocks), { ...row, doing: options.task ?? '-', at: minuteNow() })
+      const file = path.join(temporary, 'STATE.md')
+      await writeFile(file, state)
+      await indexGit(['read-tree', parent])
+      const blob = await indexGit(['hash-object', '-w', file])
+      await indexGit(['update-index', '--add', '--cacheinfo', `100644,${blob},spec/STATE.md`])
+      const tree = await indexGit(['write-tree'])
+      const commit = (await git(context.root, ['commit-tree', tree, '-p', parent, '-m', `vibe ${options.tag}: claim ${options.task ?? 'session'}`])).trim()
+      try { await git(context.root, ['push', '--quiet', context.remote, `${commit}:refs/heads/${context.target}`]) }
+      catch (error) {
+        if (/rejected|non-fast-forward|fetch first/i.test(error.stderr ?? '') && attempt < 2) continue
+        throw error
+      }
+      try { await git(context.root, [...await stateMergeArgs(context.root, context.runtime), 'merge', '--no-edit', '--quiet', commit]) }
+      catch (error) { await git(context.root, ['merge', '--abort'], [1, 128]); fail('원격 선점은 기록됐지만 로컬 병합에 실패했습니다. 변경을 보존하고 sync하세요.', [error.stderr || error.message]) }
+      return { schemaVersion: 1, ok: true, pushed: commit, task: options.task ?? null, progressOnly: true }
+    }
+  } finally { await rm(temporary, { recursive: true, force: true }) }
 }
 
 // This session's presence row; the caller commits and pushes it.

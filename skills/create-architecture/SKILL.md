@@ -47,9 +47,9 @@ spec/이 이미 있으면 0단계 생략, ARCH 개정 모드 — 진행과 마�
 
 ## 3. ssot/ARCH.md 작성
 create-ssot 스킬 폴더의 assets/ssot.md 템플릿을 `spec/ssot/ARCH.md`로 복사해 시작한다(r1). ARCH-n 결정으로: 스택 / 폴더 구조(트리 압축) / 데이터 저장·스키마 원칙 / 코드 컨벤션(네이밍·상태관리·에러 처리) / 테스트 정책 / verify 명령(test·lint·format) / CI/CD / 배포. 근거(←)는 트레이드오프가 있던 결정에만 붙인다. 폴더 구조·컨벤션처럼 항목이 여러 개인 결정은 한 줄로 늘이지 말고 결정 블록(2칸 들여쓴 하위 항목·표)으로 편다. verify 명령은 백틱 코드로, 설명을 섞지 않은 실행 가능한 형태 그대로 적는다.
-- 검증 단계는 항상 결정한다: task(추가·변경·영향 단위 테스트+typecheck·lint·format) / batch(전체 완료 시 — push 브랜치가 있으면 그 push 직전 — 통합·e2e·전체 스위트 한 번) / CI(실제 코드 push가 있을 때만 원격 검사 한 번). 태스크 커밋·WIP 저장·단위 종료는 batch 경계가 아니다. 테스트 분류는 이름이 아닌 격리 범위·의존성에 따른다.
+- 검증 단계는 항상 결정한다: task(추가·변경·영향 단위 테스트+typecheck·lint·format) / batch(조정자/호스트가 최종 통합 후보에서 push 직전 통합·e2e·전체 스위트 한 번; 커밋만 남기면 조정자의 전체 완료 관문) / CI(실제 코드 push가 있을 때만 원격 검사 한 번). 태스크 커밋·WIP 저장·단위 종료는 batch 경계가 아니다. 테스트 분류는 이름이 아닌 격리 범위·의존성에 따른다.
 - ARCH 개정 시 단계가 없거나 통합/e2e가 task에 있으면 위 단계로 정리한다(맡김은 추천안+inbox). 하위 줄은 `  - task, before each done commit: ` 뒤 실행 명령 목록, `  - batch, before code push or final completion: ` 뒤 전체 명령 목록, `  - CI, after code push: ` 뒤 원격 관문 설명으로 쓴다. 조건부 검사의 적용 조건·경로 선택법은 별도 하위 줄로 보존하되 통합/e2e는 batch에 둔다.
-- `$HAERAM_DIFF_BASE`는 태스크 시작 SHA이며 단독·work 모두 CLI가 전달한다. task→`--task-verify`. 기본(push 없이 묶음 브랜치에 모음)은 `--verify`에 빠른 검사만, 통합·e2e는 `--group-verify`에 둔다. 사용자가 통합마다 push(`--push`)를 요청한 묶음만 batch→`--verify`, CI가 최종 관문이면 `--group-verify` 생략. 같은 트리에서 통과한 전체 검사는 반복하지 않는다.
+- `$HAERAM_DIFF_BASE`는 태스크 시작 SHA이며 단독·work 모두 CLI가 전달한다. task→`--task-verify`. 별도 명시가 없으면 최종 검증 소유자는 조정자/호스트 하나이며 워커·리뷰어는 브라우저·전체 검사를 실행하지 않는다. 기본(push 없이 묶음 브랜치에 모음)은 `--verify`에 빠른 검사만, 통합·e2e는 `--group-verify`에 둔다. 사용자가 통합마다 push(`--push`)를 요청한 묶음만 batch→`--verify`, CI가 최종 관문이면 `--group-verify` 생략. 같은 트리에서 통과한 전체 검사는 반복하지 않는다.
 - 단계가 없어도 태스크에 전체 verify를 붙이지 않는다. **테스트는 기본 의무** — 빼려면 ARCH에 명시적 [o] 결정으로만 가능하고, 그 결정이 없으면 모든 태스크의 acceptance에 테스트가 요구된다. 통합/e2e 실행을 batch로 넘긴 것은 검증 면제가 아니다.
 
 ## 4. 마감

@@ -91,3 +91,41 @@ test('a cancelled heavy check does not wait behind a clone-wide lock', async (t)
   const controller = new AbortController(); controller.abort()
   await assert.rejects(runVibeCheck({ targetRoot: root, heavy: true, signal: controller.signal }, 'node --version'), /stopped/)
 })
+
+test('concurrent final checks share one run across linked worktrees without --heavy', async (t) => {
+  const { root, temporary, initial } = await fixture(t)
+  const other = path.join(temporary, 'other')
+  await git(root, 'worktree', 'add', '--detach', other, initial)
+  const counter = path.join(temporary, 'final-runs.txt')
+  const command = 'node -e \'require("fs").appendFileSync(process.env.CHECK_COUNT,"x");setTimeout(()=>{},300)\''
+  const results = await Promise.all([root, other].map((target) => execute(process.execPath,
+    [cli, 'vibe', 'check', '--target', target, '--tier', 'batch', '--diff-base', initial, '--', command],
+    { env: { ...process.env, CHECK_COUNT: counter } })))
+  const checks = results.map((result) => JSON.parse(result.stdout))
+  assert.equal(await readFile(counter, 'utf8'), 'x')
+  assert.deepEqual(checks.map((check) => check.cached).sort(), [false, true])
+  assert.ok(checks.every((check) => check.ok && check.commit === initial))
+})
+
+test('final verification rejects delegated sessions unless explicitly overridden', async (t) => {
+  const { root } = await fixture(t)
+  const runtime = path.join(root, '.git/haeram/v1')
+  await mkdir(runtime, { recursive: true })
+  for (const entry of [{ workspace: root }, { review: { workspace: root } }]) {
+    await writeFile(path.join(runtime, 'state.json'), JSON.stringify({ schemaVersion: 1, groups: {}, attempts: { example: entry } }))
+    await assert.rejects(runVibeCheck({ targetRoot: root, tier: 'batch' }, 'node --version'), /조정자\/호스트/)
+    assert.equal((await runVibeCheck({ targetRoot: root, tier: 'task' }, 'node --version')).ok, true)
+    assert.equal((await runVibeCheck({ targetRoot: root, tier: 'batch', allowFinal: true }, 'node --version')).ok, true)
+  }
+  await writeFile(path.join(runtime, 'state.json'), JSON.stringify({ schemaVersion: 1, groups: {}, attempts: {} }))
+  await assert.rejects(runVibeCheck({ targetRoot: root, tier: 'group', env: { HAERAM_VIBE_UNIT: '1' } }, 'node --version'), /조정자\/호스트/)
+})
+
+test('a final check cannot pass on dirty input or code changed while it ran', async (t) => {
+  const { root } = await fixture(t)
+  const result = await runVibeCheck({ targetRoot: root, tier: 'batch' }, 'node -e \'require("fs").writeFileSync("app.js","changed")\'')
+  assert.equal(result.ok, false)
+  assert.equal(result.stale, true)
+  assert.equal(result.exitCode, 1)
+  await assert.rejects(runVibeCheck({ targetRoot: root, tier: 'batch' }, 'node --version'), /커밋하세요/)
+})

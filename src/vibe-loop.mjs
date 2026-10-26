@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
-import { vibeStatus, vibeSession, vibePreflight, vibeBeat, vibePush, vibeAwake, vibeCheckpoint, vibeSync } from './vibe.mjs'
+import { vibeStatus, vibeSession, vibePreflight, vibeBeat, vibePush, vibeAwake, vibeCheckpoint, vibeSync, vibeClaim } from './vibe.mjs'
 import { readVerification, vibeBrief } from './vibe-brief.mjs'
 import { runVibeCheck } from './vibe-check.mjs'
 import { vibeCIWait } from './vibe-ci.mjs'
@@ -96,7 +96,7 @@ export async function vibeLoop(options = {}, injected = {}) {
   const batchSize = positive(options.batchSize, 3, 'batch-size', true), timeoutMs = positive(options.timeoutMs, 3600000, 'timeout-ms')
   const context = await vibeSession(options), root = context.root
   const directory = path.join(context.runtime, 'loops', options.tag), stopFile = path.join(directory, 'STOP'), manifest = path.join(directory, 'loop.json')
-  const deps = { status: vibeStatus, preflight: vibePreflight, execute: executeVibeUnit, push: vibePush, ci: vibeCIWait, check: runVibeCheck, checkpoint: vibeCheckpoint, now: Date.now, ...injected }
+  const deps = { status: vibeStatus, preflight: vibePreflight, execute: executeVibeUnit, sync: vibeSync, claim: vibeClaim, push: vibePush, ci: vibeCIWait, check: runVibeCheck, checkpoint: vibeCheckpoint, now: Date.now, ...injected }
   if (options.stop) { await mkdir(directory, { recursive: true }); await writeFile(stopFile, 'stop\n'); return { schemaVersion: 1, ok: true, stopFile } }
   const state = await deps.status({ ...options, tag: options.tag })
   const verify = await readVerification(root)
@@ -104,7 +104,7 @@ export async function vibeLoop(options = {}, injected = {}) {
   if (!Array.isArray(batchVerify) || batchVerify.some((command) => typeof command !== 'string' || !command.trim())) throw new SkillPackageError('--verify에는 실행 가능한 명령이 필요합니다.')
   const plan = { schemaVersion: 1, tag: options.tag, provider: options.provider ?? 'command', permissionMode: options.permissionMode ?? 'acceptEdits',
     cwd: root, concurrency: state.concurrency, route: state.route, limits: { maxUnits, maxHours: hours, batchSize, timeoutMs }, verify, batchVerify,
-    directory, stopFile, manifest, freshSessionPerUnit: true }
+    directory, stopFile, manifest, freshSessionPerUnit: true, pushEachUnit: Boolean(options.pushEachUnit) }
   if (options.dryRun) return { ...plan, dryRun: true, modelRequests: 0 }
   if ((await inspectWork({ targetRoot: root })).mode !== 'single') throw new SkillPackageError('vibe loop는 단독 checkout에서 실행하세요. 활성 work 공간은 work run을 사용합니다.')
   await mkdir(directory, { recursive: true })
@@ -181,8 +181,11 @@ export async function vibeLoop(options = {}, injected = {}) {
     await writeFile(reportPath, text)
   }
   // A batch boundary only records the report. Batch suites, the push and the CI wait run when
-  // the work runs out, at the end, or per unit under strict concurrency: a loop pushes once.
+  // the work runs out or at the end. Per-unit publication requires an explicit option.
   const flush = async (closing = false, publish = closing) => {
+    await updateReport(closing)
+    await metadataCommit(`vibe ${options.tag}: ${closing ? 'close report' : 'batch report'}`)
+    if (publish && context.target) await deps.sync({ ...options, targetRoot: root })
     const head = (await git(root, ['rev-parse', 'HEAD'])).trim()
     const files = (await git(root, ['diff', '--name-only', base, head])).trim().split('\n').filter(Boolean)
     const code = files.some((file) => !/^(spec\/|docs\/)|\.md$/i.test(file))
@@ -195,10 +198,10 @@ export async function vibeLoop(options = {}, injected = {}) {
       }
     }
     await updateReport(closing)
-    await metadataCommit(`vibe ${options.tag}: ${closing ? 'close report' : 'batch report'}`)
+    await metadataCommit(`vibe ${options.tag}: record checks`)
     // base stays at the last published commit, so the next publish still sees this code.
     if (!publish) { pending = []; await save(); return }
-    const pushed = await deps.push({ ...options, targetRoot: root })
+    const pushed = await deps.push({ ...options, targetRoot: root, ...(code ? { verifiedCommit: head } : {}) })
     if (pushed.ok === false) throw new SkillPackageError('묶음 push 실패')
     if (pushed.pushed && code) {
       codePushed = true
@@ -231,7 +234,7 @@ export async function vibeLoop(options = {}, injected = {}) {
     if (closing && pushed.pushed && code) {
       await updateReport(true)
       await metadataCommit(`vibe ${options.tag}: final CI result`)
-      const final = await deps.push({ ...options, targetRoot: root })
+      const final = await deps.push({ ...options, targetRoot: root, verifiedCommit: head })
       if (final.ok === false) throw new SkillPackageError('마감 보고서 push 실패')
     }
     base = (await git(root, ['rev-parse', 'HEAD'])).trim(); pending = []
@@ -277,16 +280,14 @@ export async function vibeLoop(options = {}, injected = {}) {
         if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== base) { await flush(false, true); if (priorityTask || recovery) continue }
         reason = finished; break
       }
-      // Claims across clones need a push branch; commit-only checkouts work alone.
+      const nextTask = status.next?.[0]?.match(/^- implement-task (T\d+)\b/)?.[1]
+      const selected = recovery?.taskId ?? (status.runnable?.includes(priorityTask) ? priorityTask : null) ?? status.implementation?.resume?.find((id) => status.runnable?.includes(id)) ?? (status.runnable?.includes(nextTask) ? nextTask : null) ?? status.runnable?.[0]
       if (status.concurrency === 'strict' && context.target) {
-        if (pending.length) await flush(false, true)
         await metadataCommit(`vibe ${options.tag}: session presence`)
-        await deps.push({ ...options, targetRoot: root })
+        await deps.claim({ ...options, targetRoot: root, task: selected })
         status = await deps.status({ ...options, targetRoot: root, tag: options.tag })
       }
       const before = { head: (await git(root, ['rev-parse', 'HEAD'])).trim(), state: await readFile(path.join(root, 'spec/STATE.md'), 'utf8') }
-      const nextTask = status.next?.[0]?.match(/^- implement-task (T\d+)\b/)?.[1]
-      const selected = recovery?.taskId ?? (status.runnable?.includes(priorityTask) ? priorityTask : null) ?? status.implementation?.resume?.find((id) => status.runnable?.includes(id)) ?? (status.runnable?.includes(nextTask) ? nextTask : null) ?? status.runnable?.[0]
       const brief = selected ? await vibeBrief({ targetRoot: root, task: selected, diffBase: before.head }) : null
       const job = { schemaVersion: 1, role: 'unit', mode: 'autopilot', workspaceMode: 'single', workspace: root, tag: options.tag, report, status, brief,
         cliCommand: [process.execPath, cli], allowTools: allowTool, permissionMode: options.permissionMode ?? 'acceptEdits', diffBase: before.head, hostManaged: true,
@@ -318,7 +319,7 @@ export async function vibeLoop(options = {}, injected = {}) {
       if (priorityTask && afterStatus.remaining && !afterStatus.remaining.some((task) => task.id === priorityTask)) priorityTask = null
       if (count >= maxUnits) { reason = 'max-units'; break }
       const completed = pending.filter((entry) => ['task', 'fix'].includes(entry.result?.kind) && entry.result.outcome === 'completed').length
-      if (afterStatus.concurrency === 'strict' || completed >= batchSize || !afterStatus.runnable?.length) await flush(false, afterStatus.concurrency === 'strict' && Boolean(context.target))
+      if (options.pushEachUnit || completed >= batchSize || !afterStatus.runnable?.length) await flush(false, Boolean(options.pushEachUnit && context.target))
     }
   } catch (caught) { reason = 'failed'; error = caught.message }
   finally {

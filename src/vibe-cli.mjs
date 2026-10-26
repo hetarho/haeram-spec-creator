@@ -1,4 +1,4 @@
-import { vibeStatus, vibeSync, vibePush, vibeBeat, vibeCheckpoint, vibePreflight, vibeAwake, vibeCheck, vibeMergeState } from './vibe.mjs'
+import { vibeStatus, vibeSync, vibePush, vibeClaim, vibeBeat, vibeCheckpoint, vibePreflight, vibeAwake, vibeCheck, vibeMergeState } from './vibe.mjs'
 import { vibeLoop } from './vibe-loop.mjs'
 import { vibeCIWait } from './vibe-ci.mjs'
 import { vibeBrief, vibeFormat } from './vibe-brief.mjs'
@@ -8,7 +8,7 @@ import { SkillPackageError } from './errors.mjs'
 const HELP = `세션 도구 (start-vibe가 사용)
   vibe loop --tag <tag> --provider claude|codex [--model <name>] [--max-units 100] [--max-hours 8]
     [--batch-size 3] [--permission-mode acceptEdits|bypass] [--allow-tool <rule> ...]
-    [--verify <batch command> ...] [--detach] [--dry-run] [--adapter <json-file>] [--json]
+    [--verify <batch command> ...] [--push-each-unit] [--detach] [--dry-run] [--adapter <json-file>] [--json]
   vibe loop --tag <tag> --stop                  정지 파일 기록; 실행 중인 단위도 종료
   vibe ci wait [--commit HEAD] [--branch <branch>] [--repo owner/repo]
     [--diff-base <sha>] [--timeout-ms 3600000] [--no-run-ms 120000] [--poll-ms 15000]
@@ -18,27 +18,30 @@ const HELP = `세션 도구 (start-vibe가 사용)
   vibe format --section task|state|ssot|report|reading  FORMAT 발췌만
   vibe status [--tag <tag>] [--no-fetch]        원격의 다른 세션·남은 일·추천 경로(route)
   vibe sync                                     원격 push 브랜치를 HEAD에 반영 (STATE는 섹션 단위 병합)
-  vibe push [--wait-ci] [--diff-base <sha>]        sync 후 HEAD를 cfg push 브랜치로 push (거부되면 재시도)
+  vibe claim --tag <tag> [--task T###]            선점 정보만 원격 트리에 push; 미검증 로컬 코드는 보존
+  vibe push [--wait-ci] [--diff-base <sha>] [--verified-commit <sha>]
+                                                sync 후 push. verified-commit 이후 코드가 바뀌면 재검증 필요
   vibe beat --tag <tag> [--mode pair|autopilot] [--doing <T###|->] [--end]
                                                 STATE ## active의 이 세션 행 쓰기·갱신·삭제 (커밋은 호출자)
   vibe checkpoint --tag <tag> [--message <text>] 작업 트리 스냅샷을 wip/<tag>로 push (현재 브랜치는 그대로)
   vibe preflight [--probe <command> [--provider claude|codex] [--allow-tool <rule> ...]]
                                                 맡김 전 점검: push 권한·lint·절전 방지·CI 접근·헤드리스 워커 실측
   vibe awake [--hours <n>] | --stop             macOS caffeinate로 절전 방지
-  vibe check [--tier task|batch] [--diff-base <task-start-sha>] [--task T###] [--timeout-ms <ms>] [--heavy] [--no-cache] -- <command>
-                                                같은 작업 트리에서 통과한 검사는 다시 돌리지 않음. --heavy는 무거운 검사를 하나씩
+  vibe check [--tier task|batch] [--diff-base <task-start-sha>] [--task T###] [--timeout-ms <ms>] [--heavy] [--no-cache] [--allow-final] -- <command>
+                                                batch/group은 조정자 전용·자동 heavy 락. --allow-final은 명시적 예외만
 공통: --target <path>, --remote <name>. 출력은 JSON(brief만 기본 마크다운). check는 요약·실패 이름·마지막 8줄·전체 로그 경로만 출력.
 `
 
 const allowed = {
   loop: ['tag', 'provider', 'model', 'max-units', 'max-hours', 'batch-size', 'permission-mode', 'allow-tool', 'verify', 'adapter', 'probe', 'probe-timeout-ms', 'timeout-ms', 'remote'],
   ci: ['commit', 'branch', 'repo', 'diff-base', 'timeout-ms', 'no-run-ms', 'poll-ms', 'remote'], brief: ['task', 'diff-base', 'ref'], format: ['section'],
-  status: ['tag', 'remote', 'section'], sync: ['remote'], push: ['remote', 'diff-base', 'timeout-ms', 'no-run-ms'], beat: ['tag', 'mode', 'doing', 'host'],
+  status: ['tag', 'remote', 'section'], sync: ['remote'], push: ['remote', 'diff-base', 'timeout-ms', 'no-run-ms', 'verified-commit'], beat: ['tag', 'mode', 'doing', 'host'],
+  claim: ['tag', 'task', 'remote'],
   checkpoint: ['tag', 'message', 'remote'], preflight: ['remote', 'probe', 'provider', 'allow-tool', 'probe-timeout-ms', 'probe-workspace', 'permission-mode'],
   awake: ['hours', 'remote'], check: ['tier', 'diff-base', 'task', 'timeout-ms'],
 }
-const flags = { loop: ['dry-run', 'detach', 'stop'], push: ['wait-ci'], status: ['no-fetch'], beat: ['end'], awake: ['stop'], check: ['heavy', 'no-cache'], brief: ['deep'] }
-const actions = { loop: vibeLoop, ci: vibeCIWait, brief: vibeBrief, format: vibeFormat, status: vibeStatus, sync: vibeSync, push: vibePush, beat: vibeBeat, checkpoint: vibeCheckpoint, preflight: vibePreflight, awake: vibeAwake }
+const flags = { loop: ['dry-run', 'detach', 'stop', 'push-each-unit'], push: ['wait-ci'], status: ['no-fetch'], beat: ['end'], awake: ['stop'], check: ['heavy', 'no-cache', 'allow-final'], brief: ['deep'] }
+const actions = { loop: vibeLoop, ci: vibeCIWait, brief: vibeBrief, format: vibeFormat, status: vibeStatus, sync: vibeSync, push: vibePush, claim: vibeClaim, beat: vibeBeat, checkpoint: vibeCheckpoint, preflight: vibePreflight, awake: vibeAwake }
 
 export async function runVibeCLI(args) {
   if (!args.length || args.includes('--help') || args.includes('-h')) { process.stdout.write(HELP); return }

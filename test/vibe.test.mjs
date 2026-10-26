@@ -7,7 +7,7 @@ import test from 'node:test'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { mergeState, upsertActive, activeRows } from '../src/state-doc.mjs'
-import { vibeStatus, vibeSync, vibePush, vibeBeat, vibeCheckpoint, vibePreflight, vibeCheck } from '../src/vibe.mjs'
+import { vibeStatus, vibeSync, vibePush, vibeClaim, vibeBeat, vibeCheckpoint, vibePreflight, vibeCheck } from '../src/vibe.mjs'
 import { withHeavyLock } from '../src/check-cache.mjs'
 import { lintSpec } from '../src/spec-lint.mjs'
 
@@ -181,6 +181,45 @@ test('push가 거부되면 원격을 가져와 STATE를 섹션 단위로 합치�
   assert.doesNotMatch(merged, /\| T001 \|/)
   assert.match(merged, /\| bbbb \| machine-b \| pair/)
   assert.deepEqual((await lintSpec({ targetRoot: b })).errors.filter((error) => !/tasks\/T001/.test(error)), [])
+})
+
+test('claims share task ownership without publishing pending code, including subsequent claims', async (t) => {
+  const { a, b, remote } = await machines(t)
+  await vibeBeat({ targetRoot: a, tag: 'aaaa', mode: 'autopilot' })
+  await writeFile(path.join(a, 'pending.txt'), 'unverified\n')
+  await commitAll(a, 'pending local candidate')
+  const first = await vibeClaim({ targetRoot: a, tag: 'aaaa', task: 'T001' })
+  assert.equal(first.progressOnly, true)
+  assert.match((await execute('git', ['--git-dir', remote, 'show', 'main:spec/STATE.md'])).stdout, /T001.*doing@\d{6}\.aaaa/)
+  await assert.rejects(execute('git', ['--git-dir', remote, 'show', 'main:pending.txt']))
+  const state = path.join(a, 'spec/STATE.md')
+  await writeFile(state, (await readFile(state, 'utf8')).split('\n').filter((line) => !line.startsWith('| T001 |')).join('\n'))
+  await commitAll(a, 'local first task complete')
+  await vibeClaim({ targetRoot: a, tag: 'aaaa', task: 'T002' })
+  assert.doesNotMatch(await readFile(state, 'utf8'), /\| T001 \|/)
+  assert.equal(await readFile(path.join(a, 'pending.txt'), 'utf8'), 'unverified\n')
+  await assert.rejects(execute('git', ['--git-dir', remote, 'show', 'main:pending.txt']))
+  await vibeBeat({ targetRoot: b, tag: 'bbbb', mode: 'autopilot' })
+  await commitAll(b, 'other session')
+  await assert.rejects(vibeClaim({ targetRoot: b, tag: 'bbbb', task: 'T002' }), /다른 세션이 선점/)
+})
+
+test('verified push rejects code introduced by sync and accepts progress-only commits', async (t) => {
+  const { a, b, remote } = await machines(t)
+  await writeFile(path.join(a, 'local.txt'), 'verified local change\n')
+  const verified = await commitAll(a, 'local candidate')
+  await writeFile(path.join(b, 'remote.txt'), 'new remote change\n')
+  const remoteHead = await commitAll(b, 'remote candidate')
+  await vibePush({ targetRoot: b })
+  await assert.rejects(vibePush({ targetRoot: a, verifiedCommit: verified }), /최종 검증 이후 코드가 변경/)
+  assert.equal((await execute('git', ['--git-dir', remote, 'rev-parse', 'main'])).stdout.trim(), remoteHead)
+  const reverified = (await git(a, 'rev-parse', 'HEAD')).stdout.trim()
+  const state = path.join(a, 'spec/STATE.md')
+  await writeFile(state, (await readFile(state, 'utf8')).replace('## log', '## log\n- 261013 final verification passed'))
+  await commitAll(a, 'record verification')
+  const result = await vibePush({ targetRoot: a, verifiedCommit: reverified })
+  assert.equal(result.ok, true)
+  assert.equal((await git(a, 'show', 'origin/main:local.txt')).stdout, 'verified local change\n')
 })
 
 test('checkpoint는 HEAD·브랜치를 건드리지 않고 미추적 파일까지 wip/<tag>에 이어 쌓는다', async (t) => {

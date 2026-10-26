@@ -9,16 +9,16 @@
 ```bash
 npx haeram-spec-creator work start feature --workers 4 --reviewers 1 --max-pending 8 --json
 npx haeram-spec-creator work doctor --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --dry-run --json
-npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm test' --group-verify 'npm ci && npm run ci' --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm run lint' --group-verify 'npm ci && npm run ci' --dry-run --json
+npx haeram-spec-creator work run --work feature --provider codex --reviewer-provider claude --task-verify 'npm run lint' --verify 'npm ci && npm run lint' --group-verify 'npm ci && npm run ci' --json
 ```
 
 기존 그룹은 기록된 한도를 사용하고, 한도 기록이 없는 그룹은 4/1/8을 사용한다.
 
 ### 검증 단계
 - `--task-verify`(선택): 태스크마다 호스트가 제출 커밋에 실행하는 빠른 검사(lint·타입 검사 등). 워커는 별도로 자기 태스크가 추가·수정·영향을 준 테스트만 실행한다. 전체 스위트를 여기에 넣으면 태스크마다 전체 테스트가 돌아 단계 구분의 의미가 없다.
-- `--verify`(필수): 단위(lane 또는 lane 없는 태스크)를 통합할 때마다 merge 후보에서 한 번 실행한다. 보통 전체 test.
-- `--group-verify`(선택): 모든 단위가 통합되면 묶음 브랜치에서 한 번 실행하고 검증 커밋을 기록한다(`work board`의 `verified`). 생략하면 나중에 `work finish`로 실행한다.
+- `--verify`(필수): 단위(lane 또는 lane 없는 태스크)를 통합할 때마다 merge 후보에서 한 번 실행한다. 기본은 빠른 통합 검사이며 통합/e2e·전체 스위트는 넣지 않는다.
+- `--group-verify`: 기본 통합/e2e·전체 스위트 관문이다. 모든 단위가 통합되면 조정자 소유 CLI 하나가 묶음 브랜치에서 한 번 실행하고 검증 커밋을 기록한다(`work board`의 `verified`). 생략하면 나중에 `work finish`로 실행한다.
 - 각 옵션은 반복할 수 있고 명령당 상한은 1시간이다(`--verify-timeout-ms`). 명령은 ARCH의 단계별 verify 결정에서 가져온다. 생략하면 `work start`/`work configure`로 묶음에 저장한 명령을 쓴다.
 - 같은 트리에서 이미 통과한 명령은 다시 돌리지 않는다(`HAERAM_*`를 읽는 명령은 그 값까지 같아야 한다). 기록에는 `cached`로 남는다. 단위·묶음 검증은 clone 단위 heavy 락을 잡고 하나씩 실행된다 — `vibe check --heavy`로 돌리는 실험과도 겹치지 않는다.
 - 명령에는 `HAERAM_TIER`(task|unit|group), `HAERAM_DIFF_BASE`(태스크=이전 단계 커밋, 재제출=고친 대상 커밋, 단위=통합 전 상위 커밋, 묶음=묶음 시작 커밋), `HAERAM_TASK`·`HAERAM_TASKS`가 전달된다. 예: `pnpm vitest related --run $(git diff --name-only "$HAERAM_DIFF_BASE" HEAD)`로 호스트가 영향받는 테스트를 직접 실행한다. 빈 선택이 통과로 끝나지 않게 명령을 구성한다.
@@ -33,7 +33,7 @@ lane 단위는 한 worker 슬롯과 한 작업 공간을 끝까지 사용한다.
 ```sh
 npx haeram-spec-creator work start feature --workers 6 --reviewers 1 --max-pending 12 --json
 # Codex만: --provider codex, Claude만: --provider claude
-npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm test' --json
+npx haeram-spec-creator work run --work feature --providers codex,claude --verify 'npm run lint' --json
 ```
 
 providers 목록은 슬롯에 순환 배정한다. 6개 슬롯과 `codex,claude`는 각각 3개, `codex,claude,claude`는 Codex 2개·Claude 4개다. 워커 6개에 리뷰어는 별도다. 각 슬롯은 단위 완료 뒤 다음 의존성 충족 단위를 가져간다. 태스크 30개를 꼭 5개씩 고정 분배하지 않으며, dep·touches·리뷰 적체가 있으면 실제 동시 실행 수는 줄어든다.

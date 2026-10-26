@@ -227,7 +227,7 @@ function tierChecks(options, group, tier) {
   return fail(`실행할 검증 명령을 --verify로 지정하거나 work start/configure에 ${tier === 'unit' ? '--verify' : '--group-verify'}로 저장하세요.`)
 }
 
-// Full suites run at unit integration and group finish, so a single check may be long.
+// Unit checks are fast by default; the coordinator's final group gate may be long.
 function verifyTimeout(options) {
   const value = Number(options.verifyTimeoutMs ?? 60 * 60 * 1000)
   if (!Number.isSafeInteger(value) || value < 1) fail('verify-timeout-ms: 양의 정수가 필요합니다.')

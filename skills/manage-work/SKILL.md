@@ -20,7 +20,7 @@ description: >-
 작은 단독 작업은 implement-task로 보낸다. 작업 묶음을 만들거나 운영할 때만 [전체 절차](references/workflow.md)를 읽는다. 단독 세션에서 이 참조를 로드하지 않는다.
 
 - 시작/재개: `work status --json`, `work board --work <id> --json`으로 배정·기획 공간·막힌 이유를 확인한다. 브랜치 이름으로 소유권을 추정하지 않는다.
-- 검증 매핑: ARCH task → `--task-verify`, batch·push 전 → `--verify`, CI → push 뒤 `vibe ci wait` 한 번. 별도 로컬 최종 관문이 필요한 ARCH만 `--group-verify`를 지정한다.
+- 기본 검증 매핑: ARCH task → `--task-verify`, 빠른 통합 검사 → `--verify`, 통합/e2e·전체 스위트 → `--group-verify`, CI → 최종 코드 push 뒤 한 번. 사용자 별도 명시가 없으면 조정자 소유 [최종 검증 절차](../start-vibe/references/verification.md)를 따른다. 기존 묶음도 저장된 명령을 확인하고 관문이 실행 중이 아닐 때 configure로 맞춘다. 기본은 로컬 작업 브랜치에 모으고 단위별 push를 켜지 않는다.
 - 기획·SSOT·채번은 group.path에서만. 워커는 자기 코드·acceptance 체크·result만 수정한다. doing/done 계약은 바꾸지 않는다.
 - 통합은 CLI의 잠금·검증·원격 판정을 따른다. 실패·충돌·미커밋 변경을 보존하며 선점을 임의로 회수하지 않는다.
 - headless runner는 `work run`; 직렬 단독 맡김은 `vibe loop`. 긴 명령은 완료 이벤트까지 CLI가 기다리며 모델 폴링을 하지 않는다.

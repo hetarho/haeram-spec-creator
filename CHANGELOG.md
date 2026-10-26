@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.6
+
+- Make start-vibe's default final verification coordinator-owned: workers and reviewers run affected unit tests and fast checks, units collect locally, and one host runs integration/e2e/full suites on the integrated candidate before the target-branch push. Align existing-group migration, skill handoffs and runner examples. Per-unit loop publication now requires explicit `--push-each-unit`; strict-mode `vibe claim` shares only ownership metadata on the remote tree while keeping pending code local.
+- Automatically lock batch/group checks, recheck cached passes inside the lock, reject delegated final checks unless explicitly overridden with `--allow-final`, and fail final checks when the committed candidate changes. Guard pushes with `--verified-commit` so remote synchronization cannot silently publish unverified changes.
+
 ## 0.7.5
 
 - Archive fully converted ideation documents under `spec/ideation/done/` and remove their STATE rows. Partial conversion stays ready; both create-ssot and update-ssot compare the adopted scope against the actual SSOTs before archiving. Preserve unresolved work in an active follow-up document.

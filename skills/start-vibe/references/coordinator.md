@@ -1,11 +1,11 @@
 # 조정자 절차 — start-vibe가 작업 묶음을 쓸 때
 
-SKILL.md 2절의 조건(독립 단위 2개 이상, 단위마다 태스크 3개 이상, touches 분리, explore와 그 후속 제외)을 모두 만족할 때만 쓴다. 아래 `work ...`·`vibe ...`는 `npx haeram-spec-creator ...`의 축약이다. 조정자는 이 세션 하나다 — 결정·주차·보고만 하고 단위를 직접 구현하지 않는다(구현하면 그동안 결정 요청이 쌓인다).
+SKILL.md 2절의 조건(독립 단위 2개 이상, 단위마다 태스크 3개 이상, touches 분리, explore와 그 후속 제외)을 모두 만족할 때만 쓴다. 아래 `work ...`·`vibe ...`는 `npx haeram-spec-creator ...`의 축약이다. 조정자는 이 세션 하나다 — 결정·주차·보고와 최종 검증/push 소유권을 맡고 단위를 직접 구현하지 않는다(구현하면 그동안 결정 요청이 쌓인다).
 
 ## 1. 시작
 - 계획(태스크·STATE)을 커밋한 뒤:
   `work start <slug> --task-verify '<태스크 단계>' --verify '<단위 통합>' [--group-verify '<묶음 완료>'] [--allow-tool '<규칙>' ...] [--review-path <계약 경로> ...] --json`
-  - 검증 명령은 ARCH의 단계별 verify 결정에서 가져온다. 태스크 단계는 영향 단위 테스트+빠른 검사만이다. 단위 --verify는 빠른 검사, 통합·e2e는 --group-verify(묶음 완료 관문)에 둔다. 태스크 종료만으로 전체 검사를 실행하지 않는다.
+  - 검증 명령은 ARCH의 단계별 verify 결정에서 가져온다. 태스크 단계는 영향 단위 테스트+빠른 검사만이다. 단위 --verify는 빠른 검사, 통합·e2e는 --group-verify(조정자 소유 최종 관문)에 둔다. 별도 명시가 없으면 [검증 절차](verification.md)를 자동 적용하고 기존 활성 묶음의 매핑도 확인·정리한다. 태스크 종료만으로 전체 검사를 실행하지 않는다.
   - `--push <branch>`는 사용자가 통합마다 push를 요청했을 때만 둔다 — 통합마다 push와 원격 CI가 돈다. 기본은 묶음 브랜치에 커밋으로만 모은다.
   - `--allow-tool`은 헤드리스 워커가 묻지 않고 실행할 명령 규칙이다(Claude 형식, 예 `Bash(pnpm run *)`). 워커가 도는 새 worktree는 신뢰된 폴더가 아니라서 프로젝트 `.claude/settings.json`의 허용 목록이 적용되지 않는다.
   - `--review-path`는 계약·마이그레이션처럼 언제나 리뷰가 필요한 경로다. 리뷰는 위험한 단위만 받는다(기본 `--review risky`): 변경 300줄 초과(`--review-lines`), touches 밖 변경이나 touches 미선언, review-path 변경, 테스트 파일 변경 없음, 수정 요청·통합 실패 이력, 이 단위 태스크를 가리키는 inbox `decided` — 하나라도 있으면 리뷰, 없으면 정책 승인 후 통합 검증만 한다.

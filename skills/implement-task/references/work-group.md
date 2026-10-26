@@ -22,4 +22,4 @@
 - 루프에서는 `work integrate`·`work finish`를 직접 실행하지 않고, 다른 세션의 작업 공간에 쓰지 않는다.
 
 
-작업 묶음의 워커는 추가·변경·영향 단위 테스트+빠른 검사만 실행하고 통합/e2e 실행 대상은 result limits에 남긴다. 단위 검증은 integrate --verify, 마지막 관문은 지정한 group-verify다. 통합마다 대상 브랜치로 push하면 그 직전에 통합·e2e를, push 없이 모으면 전체 완료 또는 최종 대상 브랜치 push 때 실행한다. 워커는 이 관문을 중복 실행하거나 CI를 기다리지 않는다. STATE·SSOT·태스크 st 대신 acceptance 체크·result·코드만 수정하며, 제출 후 아카이브는 CLI가 맡는다.
+작업 묶음의 워커는 추가·변경·영향 단위 테스트+빠른 검사만 실행하고 통합/e2e 실행 대상은 result limits에 남긴다. 단위 검증은 빠른 integrate --verify, 통합/e2e·전체 스위트의 마지막 관문은 조정자 소유 group-verify다. 워커·리뷰어 세션 종료 때 별도 브라우저·전체 검사를 시작하지 않는다. 통합마다 대상 브랜치로 push하면 그 직전에 통합·e2e를, push 없이 모으면 전체 완료 또는 최종 대상 브랜치 push 때 실행한다. 워커는 이 관문을 중복 실행하거나 CI를 기다리지 않는다. STATE·SSOT·태스크 st 대신 acceptance 체크·result·코드만 수정하며, 제출 후 아카이브는 CLI가 맡는다.

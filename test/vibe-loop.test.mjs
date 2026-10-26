@@ -299,17 +299,21 @@ test('detached host survives parent return and writes its final manifest with on
   assert.doesNotMatch(await readFile(path.join(root, state.report), 'utf8'), /to:-/)
 })
 
-test('strict concurrency with a push branch keeps per-unit batch gates and pushes', async (t) => {
+for (const pushEachUnit of [false, true]) test(`strict concurrency runs one final gate by default; per-unit push=${pushEachUnit}`, async (t) => {
   const { root } = await fixture(t)
   const file = path.join(root, 'spec/STATE.md')
   await writeFile(file, (await readFile(file, 'utf8')).replace('- push: -', '- push: main')); await git(root, 'commit', '-qam', 'push branch')
   let checks = 0, pushes = 0, n = 0
-  const result = await vibeLoop({ ...opts(root), maxUnits: 2 }, { preflight: passed,
+  const result = await vibeLoop({ ...opts(root), maxUnits: 3, pushEachUnit }, { preflight: passed,
     status: async (options) => ({ ...await vibeStatus(options), concurrency: 'strict' }),
+    claim: async () => ({ ok: true }),
     execute: async () => { await writeFile(path.join(root, 'app.js'), `// ${++n}\n`); await git(root, 'add', 'app.js'); await git(root, 'commit', '-q', '-m', 'task'); return unit() },
-    check: async () => { checks++; return { ok: true } }, push: async () => { pushes++; return { ok: true, pushed: null } },
+    sync: async () => ({ ok: true }),
+    check: async () => { checks++; return { ok: true } }, push: async (options) => { pushes++; assert.ok(options.verifiedCommit); return { ok: true, pushed: null } },
   })
-  assert.equal(result.ok, true, result.error); assert.equal(checks, 2); assert.ok(pushes >= 2)
+  assert.equal(result.ok, true, result.error)
+  assert.equal(checks, pushEachUnit ? 3 : 1)
+  assert.equal(pushes, pushEachUnit ? 3 : 1)
 })
 
 test('hourly snapshots span fresh unit sessions instead of resetting at each launch', async (t) => {
