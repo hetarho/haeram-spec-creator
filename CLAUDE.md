@@ -30,6 +30,7 @@
 10. 언어: spec 산출 문서(FORMAT/STATE 템플릿 포함)는 영어, SKILL.md 본문은 한국어. 스킬이 인용하는 문서 리터럴(`all`, 섹션명, log 문구 등)은 반드시 FORMAT의 영어 값과 일치시킬 것. 예외는 사람용 산문인 NARRATIVE.md와 reports/(owner가 읽는 맡김 보고서, cfg.lang) — 섹션명·인용줄 키·ID는 FORMAT 값 그대로.
 11. 맡김(autopilot)에는 사람 입력을 기다리는 경로가 없다. 질문은 start-vibe 시작 때 한 번(모드·무엇부터·다른 기기)과 맡김 직전 preflight 실패 1회뿐이고, 그 뒤 모든 결정 지점은 추천안 채택 + inbox `decided` + 보고서다. 기획 스킬도 같은 질문을 만들어 결정함에 남긴다(돌아온 사용자가 받았어야 할 질문을 그대로 검토). 과금·데이터 삭제·개인정보·보안 정책은 `[?]`로 두고, 되돌리기 어렵거나 프로젝트 밖에 영향을 주는 일과 함께 주차한다. 모드는 세션 범위라 cfg에 넣지 않는다. 권한 확인 창도 질문이다 — 사람이 없으면 세션이 멈추고 캐시가 식는다. 맡김에서는 창이 뜰 만한 호출(프로젝트 밖 쓰기·삭제, `cd`가 섞인 복합 명령, `rm -rf`·`kill`·`curl`·`sudo`, 부하 에이전트)을 하지 않고 주차한다(공통 규칙 4번 + start-vibe 3절). SSOT에는 잠정 결정도 일반 `[o]`로만 들어간다(원칙 5 — 잠정이라는 사실은 inbox가 ID로 가리킨다).
 12. 태스크마다 커밋한다. push는 기본으로 하지 않는다(cfg `push: -`) — push마다 원격 CI가 돌아 빌드 시간을 쓴다. 사용자가 cfg push에 브랜치를 적어 둔 경우에만 세션 끝·loop 멈춤에 조정자가 최종 검증 후 한 번 push한다(묶음 경계는 보고서만). strict는 선점 push·원격 판정을 유지하되 단위별 코드 push/e2e를 자동으로 켜지 않는다. loop `--push-each-unit`·묶음 `--push`는 사용자가 단위별 push를 명시했을 때만. 장기 맡김은 `vibe loop`로 단위마다 새 세션을 만들고 CI/긴 명령 대기는 CLI가 처리한다. 1시간 넘는 작업은 `vibe checkpoint`로 `wip/<tag>`에 스냅샷한다(push 브랜치를 WIP로 더럽히지 않는다). 다른 기기와의 선점은 doing tag와 active 행을 먼저 push하는 쪽이 이긴다. STATE는 `vibe merge-state` 드라이버로 섹션 단위 병합한다(사용자 git 설정에 쓰지 않고 호출마다 `-c`로).
+   기획 문서는 예외: cfg `plan` 브랜치(기본 `main`)가 채번·기획의 정본이다. 어느 checkout·worktree에서든 `vibe plan-sync` 후 기획하고, spec/만 담은 기획 커밋을 `vibe plan-push`로 그 브랜치에 바로 올린다(cfg push와 무관, 코드는 실리지 않음, 원격에 브랜치가 없으면 깨끗한 로컬 브랜치만 fast-forward). 같은 T###는 먼저 올린 쪽이 이기고 진 쪽이 다시 채번한다. 올린 결과를 merge로 되가져와 이후 3-way 병합(태스크 아카이브·STATE 행 제거)이 todo를 되살리지 않게 한다. spec만 바뀐 push에서 CI·빌드를 건너뛰는 설정은 대상 프로젝트 몫이다.
 13. 프로젝트 독립성: 특정 대상 프로젝트의 이름·도메인·업무 규칙·실제 태스크/결정 ID를 이 패키지의 코드·스킬·템플릿·예시·테스트에 넣지 않는다. 사례에서 확인한 문제는 일반적인 실행·검증·배정 규칙으로만 반영한다. 문서의 외부 측정 자료도 대상 식별자와 도메인을 익명화하고 수치·측정 한계만 보존한다.
 
 ## 검증
@@ -37,7 +38,7 @@
 - 로컬 설치 테스트: `node ./bin/haeram-spec-creator.mjs install --target <경로>` 후 `check --target <경로>`.
 - `lint --target <경로>` — 타겟 프로젝트 spec/의 FORMAT 불변식 검사(ID·st 형식, rev/tasked 정합, 참조 무결성, chg 연속성, 고아 파일, SSOT 골격 밖 섹션·산문, inbox 참조·active 행·explore exit·보고서 골격). `--hints`로 검토 후보 전체 출력(기본 10건).
 - `vibe brief <T###|ID-n|ID|ID@rev>` — 태스크·결정 브리핑(마크다운, `--json`·`--ref`·`--deep`). 대표 태스크 전달량은 `node scripts/measure-brief.mjs --target <경로> [--tokens]`(읽기 전용).
-- `vibe status|sync|push|beat|checkpoint|preflight|awake|check` — start-vibe가 쓰는 세션 도구. 테스트는 bare 원격과 clone 둘로 다른 기기를 재현한다(`test/vibe.test.mjs`), 맡김 실행기는 가짜 provider로(`test/work-autopilot.test.mjs`).
+- `vibe status|sync|plan-sync|plan-push|push|beat|checkpoint|preflight|awake|check` — start-vibe가 쓰는 세션 도구. 테스트는 bare 원격과 clone 둘로 다른 기기를 재현한다(`test/vibe.test.mjs`), 맡김 실행기는 가짜 provider로(`test/work-autopilot.test.mjs`).
 
 ## 배포
 - main 푸시 시 release.yml이 자동 publish — 단 package.json 버전이 npm에 아직 없을 때만(가드 스텝이 건너뜀). 릴리스는 `npm version patch` 후 푸시.

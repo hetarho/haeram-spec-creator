@@ -23,7 +23,7 @@ const STALE_MINUTES = 90
 export const minuteNow = () => `${new Date().toISOString().slice(0, 16)}Z`
 const hostName = () => os.hostname().replace(/\.local$/, '').replace(/[|\s]/g, '-') || 'host'
 
-function cfgOf(text) {
+export function cfgOf(text) {
   const map = new Map()
   for (const line of sections(text).get('cfg') ?? []) {
     const match = line.match(/^-\s+([\w-]+):\s*([^#]*)/)
@@ -39,12 +39,12 @@ async function readOptional(file) {
   }
 }
 
-const exists = async (root, ref) => Boolean((await git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], [1]))?.trim())
-const sha = async (root, ref) => (await git(root, ['rev-parse', '--verify', `${ref}^{commit}`])).trim()
-const ancestor = async (root, older, newer) => (await git(root, ['merge-base', '--is-ancestor', older, newer], [1])) !== null
+export const exists = async (root, ref) => Boolean((await git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], [1]))?.trim())
+export const sha = async (root, ref) => (await git(root, ['rev-parse', '--verify', `${ref}^{commit}`])).trim()
+export const ancestor = async (root, older, newer) => (await git(root, ['merge-base', '--is-ancestor', older, newer], [1])) !== null
 
 // Fetch one branch; a branch the remote does not have is an answer, a network failure is not.
-async function fetchBranch(root, remote, source, target) {
+export async function fetchBranch(root, remote, source, target) {
   try {
     await execute('git', ['-C', root, 'fetch', '--quiet', remote, `+${source}:${target}`], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } })
     return true
@@ -270,7 +270,7 @@ export async function vibeStatus(options = {}) {
   const text = await readOptional(path.join(root, 'spec/STATE.md'))
   if (text === null) return { schemaVersion: 1, route: 'architecture', reason: 'spec/STATE.md가 없습니다.', git: Boolean(workspace.git) }
   const cfg = cfgOf(text)
-  const result = { schemaVersion: 1, tag: options.tag ?? null, cfg: { level: cfg.get('level') ?? null, lang: cfg.get('lang') ?? null, push: cfg.get('push') ?? null } }
+  const result = { schemaVersion: 1, tag: options.tag ?? null, cfg: { level: cfg.get('level') ?? null, lang: cfg.get('lang') ?? null, push: cfg.get('push') ?? null, plan: cfg.get('plan') ?? null } }
   if (options.section) {
     if (options.section !== 'inbox') fail('status --section은 inbox를 지원합니다.')
     return { ...result, inbox: summarize(text).inbox }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.7
+
+- Make one planning branch (STATE cfg `plan`, default `main`) the home of every task ID and planning document, whichever checkout or worktree plans. `vibe plan-sync` merges its latest before planning; `vibe plan-push` replays spec-only planning commits onto it (pushed when the remote has the branch, independent of cfg push; otherwise the clean local branch is fast-forwarded) and merges the result back so later task archiving cannot resurrect published tasks. A T### another checkout published first is refused with the colliding files, and the losing checkout renumbers. Commits touching code are refused. `plan: -` keeps the previous single-checkout behavior.
+
 ## 0.7.6
 
 - Make start-vibe's default final verification coordinator-owned: workers and reviewers run affected unit tests and fast checks, units collect locally, and one host runs integration/e2e/full suites on the integrated candidate before the target-branch push. Align existing-group migration, skill handoffs and runner examples. Per-unit loop publication now requires explicit `--push-each-unit`; strict-mode `vibe claim` shares only ownership metadata on the remote tree while keeping pending code local.

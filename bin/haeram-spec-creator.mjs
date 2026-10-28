@@ -18,7 +18,7 @@ const HELP = `haeram-spec-creator
   haeram-spec-creator board [--target <path>] [--json]
   haeram-spec-creator work <start|claim|status|board|update|submit|integrate|release|cleanup|recover|unlock> ...
   haeram-spec-creator work --help
-  haeram-spec-creator vibe <status|sync|push|beat|checkpoint|preflight|awake|check> ...  (start-vibe 세션 도구, vibe --help)
+  haeram-spec-creator vibe <status|sync|plan-sync|plan-push|push|beat|checkpoint|preflight|awake|check> ...  (start-vibe 세션 도구, vibe --help)
 
 옵션:
   --target <path>  설치·검사·조회할 프로젝트 (기본값: 현재 폴더)
