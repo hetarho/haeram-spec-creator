@@ -59,8 +59,6 @@ export const EXIT_LINE = /^- \[[ v]\] exit: \S/
 export const SESSION_TAG = /^[A-Za-z0-9]{2,8}$/
 export const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z$/
 export const INBOX_LINE = /^- (\d{6}) (decided|parked|suggest) ([^:]+?): (\S.*)$/
-// A pair design session open on this checkout (STATE ## design): one line until the user ends it.
-export const DESIGN_LINE = /^- since:(\S+) \| tag:(\S+) \| scope:(\S.*)$/
 export const REPORT_FILE = /^(\d{6}-[A-Za-z0-9]{2,8})\.md$/
 export const REPORT_SECTIONS = ['done', 'decided', 'parked', 'checks', 'next']
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- Keep the open design out of STATE. A design is now checkout-local interactive state in the checkout's own Git directory (`haeram-interactive.json`, written by `vibe design start|end`): STATE travels with every planning commit and `vibe plan-push` to the planning branch and into every worktree, so a `## design` line there could reach unrelated worktrees and stop their push, preflight and loop. `vibe status`, `vibe push`, preflight and `vibe loop` read the local state, so only the designing checkout is held. Starting a design leaves the working tree clean.
+- Common rule 2 asks before committing or pushing when `vibe status` reports `design`. FORMAT moves the design rules from State rules to Sessions; the STATE skeleton no longer has `## design`, and lint warns when a 0.8.0 `## design` section remains.
+
 ## 0.8.0
 
 - Add `start-design`, a pair-only live design mode. It marks the checkout as designing in a new optional STATE section `## design` (`- since:<ISO UTC> | tag:<tag> | scope:<text>`, kept uncommitted next to the edits), keeps a hot-reload dev server up and edits code exactly as the user describes — no tests, e2e, task files, SSOT edits, commits or pushes while the design is open. When the user says the design is finished it runs every test, then makes one commit with the design, its test updates and STATE log `- YYMMDD design <area>: <what>`.

@@ -3,7 +3,7 @@
 > Current checkout only; not an atomic lock or a cross-worktree coordination store. Content truth: ssot/. Task detail: tasks/. Notation: FORMAT.md.
 > Work-group checkpoints may add a CLI-generated work summary linking to spec/work/<group>.json. Read work board for live progress.
 > Running sessions add an active row; autopilot adds inbox lines for the owner to confirm and a report under reports/.
-> A design session (start-design) adds a design line and holds tests, commits and pushes until the user ends the design.
+> An open design (start-design) is checkout-local interactive state kept by vibe design — never written here.
 
 ## cfg
 - level: ?  # expert|mid|novice — filled by create-architecture calibration

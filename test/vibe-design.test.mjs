@@ -6,43 +6,36 @@ import { fileURLToPath } from 'node:url'
 import { fixture, git, execute } from './helpers/vibe-fixture.mjs'
 import { vibeDesign } from '../src/vibe-design.mjs'
 import { vibeStatus } from '../src/vibe.mjs'
-import { designOf, setDesign, mergeState, upsertActive } from '../src/state-doc.mjs'
 import { lintSpec } from '../src/spec-lint.mjs'
 const cli = fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.url))
 
-const entry = { since: '2026-10-30T01:00Z', tag: 'k3f9', scope: 'landing hero' }
-
-test('design 줄: active 뒤(없으면 cfg 뒤)에 하나만 쓰고, 지우면 원래 STATE로 돌아간다', async (t) => {
-  const { state } = await fixture(t, 1)
-  const opened = setDesign(state, entry)
-  assert.match(opened, /- brief: domain[^\n]*\n(?:- always[^\n]*\n)?\n## design\n- since:2026-10-30T01:00Z \| tag:k3f9 \| scope:landing hero\n\n## ssot/)
-  assert.deepEqual(designOf(opened), { ...entry, line: '- since:2026-10-30T01:00Z | tag:k3f9 | scope:landing hero' })
-  assert.equal(setDesign(opened, null), state)
-  const withActive = setDesign(upsertActive(state, { tag: 'aaaa', host: 'h', mode: 'pair', since: entry.since, at: entry.since }), entry)
-  assert.match(withActive, /## active\n[\s\S]*\| aaaa \|[^\n]*\n\n## design\n/)
-  assert.equal(designOf(state), null)
-  // A malformed line still counts as an open design.
-  assert.equal(designOf(state.replace('## ssot', '## design\n- designing\n\n## ssot')).tag, null)
-  // One side opening a design while the other logs: both survive the section merge.
-  const theirs = state.replace('## log', '## log\n- 261030 fix ui: label')
-  const merged = mergeState(state, opened, theirs)
-  assert.deepEqual(merged.conflicts, [])
-  assert.equal(designOf(merged.text).tag, 'k3f9')
-  assert.match(merged.text, /- 261030 fix ui: label/)
+test('디자인 중 상태는 checkout 로컬이다: STATE를 바꾸지 않고 다른 worktree에 보이지 않는다', async (t) => {
+  const { root, temporary } = await fixture(t, 1)
+  const state = await readFile(path.join(root, 'spec/STATE.md'), 'utf8')
+  await vibeDesign({ targetRoot: root, step: 'start', tag: 'k3f9', scope: 'landing hero' })
+  assert.equal(await readFile(path.join(root, 'spec/STATE.md'), 'utf8'), state)
+  assert.equal(await git(root, 'status', '--porcelain'), '')
+  const stored = JSON.parse(await readFile(path.join(root, '.git/haeram-interactive.json'), 'utf8'))
+  assert.equal(stored.design.tag, 'k3f9')
+  // A planning commit in this checkout carries nothing of the design to the planning branch.
+  await writeFile(path.join(root, 'spec/STATE.md'), state.replace('## log', '## log\n- 261030 create-task ARCH'))
+  await git(root, 'commit', '-qam', 'plan')
+  assert.equal(await git(root, 'show', 'HEAD:spec/STATE.md'), state.replace('## log', '## log\n- 261030 create-task ARCH').trimEnd())
+  const other = path.join(temporary, 'other')
+  await git(root, 'worktree', 'add', '-q', '-b', 'other', other)
+  const status = await vibeStatus({ targetRoot: other, fetch: false })
+  assert.equal(status.design, null)
+  assert.notEqual(status.route, 'design')
+  assert.equal((await vibeDesign({ targetRoot: other })).design, null)
+  assert.equal((await vibeStatus({ targetRoot: root, fetch: false })).route, 'design')
 })
 
-test('lint: design 줄은 하나, since·tag 형식을 지킨다', async (t) => {
+test('lint: 0.8.0의 STATE ## design 섹션은 경고로 정리를 요구한다', async (t) => {
   const { root, state } = await fixture(t, 1)
-  const file = path.join(root, 'spec/STATE.md')
-  const designErrors = async () => (await lintSpec({ targetRoot: root })).errors.filter((error) => error.startsWith('design'))
-  await writeFile(file, setDesign(state, entry))
-  assert.deepEqual(await designErrors(), [])
-  await writeFile(file, state.replace('## ssot', '## design\n- since:yesterday | tag:k | scope:-\n- designing\n\n## ssot'))
-  const errors = await designErrors()
-  assert.ok(errors.some((error) => /하나입니다/.test(error)))
-  assert.ok(errors.some((error) => /since/.test(error)))
-  assert.ok(errors.some((error) => /tag 형식/.test(error)))
-  assert.ok(errors.some((error) => /줄 형식 오류/.test(error)))
+  await writeFile(path.join(root, 'spec/STATE.md'), state.replace('## ssot', '## design\n- since:2026-10-30T01:00Z | tag:k3f9 | scope:-\n\n## ssot'))
+  const lint = await lintSpec({ targetRoot: root })
+  assert.ok(lint.warnings.some((warning) => /STATE ## design/.test(warning)))
+  assert.deepEqual(lint.errors.filter((error) => /design/.test(error)), [])
 })
 
 test('vibe design: 시작·재개·status route·끝 — 커밋은 하지 않는다', async (t) => {
@@ -50,6 +43,7 @@ test('vibe design: 시작·재개·status route·끝 — 커밋은 하지 않는
   const head = await git(root, 'rev-parse', 'HEAD')
   const started = await vibeDesign({ targetRoot: root, step: 'start', tag: 'k3f9', scope: '  landing\n hero ' })
   assert.equal(started.resumed, false)
+  assert.match(started.design.since, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/)
   assert.equal(started.design.scope, 'landing hero')
   const status = await vibeStatus({ targetRoot: root, fetch: false })
   assert.equal(status.route, 'design')

@@ -7,7 +7,8 @@ import { promisify } from 'node:util'
 import { inspectWorkspace, git } from './workspace.mjs'
 import { runtimeRoot } from './work-runtime.mjs'
 import { sections, tableRows, quoteLine, quoteFields, exploreValue, INBOX_LINE, SESSION_TAG, TASK_ID } from './spec-format.mjs'
-import { activeRows, upsertActive, mergeState, parseState, renderState, designOf } from './state-doc.mjs'
+import { activeRows, upsertActive, mergeState, parseState, renderState } from './state-doc.mjs'
+import { designOf } from './interactive-state.mjs'
 import { workingTree, checkKey, cachedPass, recordPass, withHeavyLock } from './check-cache.mjs'
 import { lintSpec } from './spec-lint.mjs'
 import { workInternals } from './work-groups.mjs'
@@ -115,7 +116,7 @@ export async function vibeSync(options = {}) {
 export async function vibePush(options = {}) {
   const context = await vibeSession(options)
   if (!context.target) return { schemaVersion: 1, ok: true, pushed: null, reason: 'push-disabled' }
-  if (designOf(context.state ?? '')) fail('디자인 중입니다(STATE ## design). 사용자에게 디자인이 끝났는지 확인하고 start-design 마감(vibe design verify → end → 커밋) 뒤 push하세요.')
+  if (await designOf(context.workspace)) fail('이 checkout은 디자인 중입니다(vibe design). 사용자에게 디자인이 끝났는지 확인하고 start-design 마감(vibe design verify → end → 커밋) 뒤 push하세요.')
   if (!context.remote) fail('push할 원격이 없습니다. cfg push를 -로 두거나 원격을 추가하세요.')
   let last
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -309,7 +310,7 @@ export async function vibeStatus(options = {}) {
     result.self = seen.find((entry) => entry.tag === options.tag) ?? null
   }
   const local = summarize(text)
-  const design = designOf(text)
+  const design = await designOf(workspace)
   const explore = []
   for (const task of local.tasks) {
     const file = (await readdir(path.join(root, 'spec/tasks')).catch(() => [])).find((name) => name.startsWith(`${task.id}.`))
@@ -340,7 +341,7 @@ export async function vibeStatus(options = {}) {
     remaining: local.tasks.map((task) => ({ ...task, title: task.title.slice(0, 120) })), runnable: runnable.map((task) => task.id),
     settled: !hasImplementation && !hasPlanning, parkedOnly: !runnable.length && !local.pending.length && !local.reviews.length && !hasPlanning && (parked.size > 0 || implementation.blocked.length > 0),
     implementation, planning, inbox: local.inbox.slice(0, 3).map(({ date, kind, refs, text }) => ({ date, kind, refs, text: text.slice(0, 220) })), inboxMore: local.inbox.length > 3, openReports,
-    design: design && { since: design.since, tag: design.tag, scope: design.scope },
+    design,
     // An open design comes first: its edits are uncommitted until the user ends it.
     route: design ? 'design' : hasImplementation && hasPlanning ? 'choose' : hasImplementation ? 'implementation' : hasPlanning ? 'planning' : 'ideation-first' }
 }
@@ -368,7 +369,7 @@ export async function vibePreflight(options = {}) {
     }
   }
   // Design edits wait for the user watching them; nobody is there to end the design.
-  const design = designOf(context.state ?? '')
+  const design = await designOf(context.workspace)
   add('design', !design, design ? `design in progress since ${design.since} (${design.tag}) — end it with start-design first` : 'none', true)
   const dirty = (await git(context.root, ['status', '--porcelain'])).split('\n').filter(Boolean)
   add('clean', dirty.length === 0, dirty.length ? `${dirty.length} uncommitted paths — commit or leave them out of unit commits` : 'clean')

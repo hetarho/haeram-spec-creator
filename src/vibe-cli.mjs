@@ -30,8 +30,9 @@ const HELP = `세션 도구 (start-vibe·start-design이 사용)
                                                 STATE ## active의 이 세션 행 쓰기·갱신·삭제 (커밋은 호출자)
   vibe checkpoint --tag <tag> [--message <text>] 작업 트리 스냅샷을 wip/<tag>로 push (현재 브랜치는 그대로)
   vibe design [start --tag <tag> [--scope <text>] | verify [--verify <command> ...] [--timeout-ms <ms>] | end]
-                                                디자인 모드(start-design): STATE ## design 줄 쓰기·전체 검증·삭제 (커밋은 호출자).
-                                                verify는 ARCH task·batch 명령 전부를 미커밋 작업 트리에서 한 번씩. 디자인 중 push·맡김은 거절
+                                                디자인 모드(start-design): 이 checkout의 Git 디렉터리에 디자인 중 상태 쓰기·전체 검증·삭제.
+                                                STATE·다른 worktree는 건드리지 않음 (커밋은 호출자). verify는 ARCH task·batch 명령 전부를
+                                                미커밋 작업 트리에서 한 번씩. 디자인 중 이 checkout의 push·맡김은 거절
   vibe preflight [--probe <command> [--provider claude|codex] [--allow-tool <rule> ...]]
                                                 맡김 전 점검: push 권한·lint·절전 방지·CI 접근·헤드리스 워커 실측
   vibe awake [--hours <n>] | --stop             macOS caffeinate로 절전 방지

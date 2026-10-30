@@ -32,7 +32,7 @@ test('스킬은 start-vibe·start-design을 포함해 13종이고 모두 공통 
 })
 
 test('공통 규칙 2번은 디자인 중 커밋·push 전에 디자인이 끝났는지 묻게 한다', async () => {
-  for (const [name, entry] of await commonRules()) assert.ok(entry['2'].includes('STATE에 `## design`이 있으면(디자인 중) 커밋·push 전에 사용자에게 디자인이 끝났는지 묻고'), `${name}: 공통 규칙 2번에 디자인 확인이 없습니다.`)
+  for (const [name, entry] of await commonRules()) assert.ok(entry['2'].includes('`vibe status`에 `design`이 있으면(이 checkout이 디자인 중) 커밋·push 전에 사용자에게 디자인이 끝났는지 묻고'), `${name}: 공통 규칙 2번에 디자인 확인이 없습니다.`)
 })
 
 test('공통 규칙은 정해진 예외 스킬 밖에서 한 글자까지 같다 (5번 읽기·2번 문서 먼저는 예외 없음)', async () => {
