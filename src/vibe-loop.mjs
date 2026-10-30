@@ -266,6 +266,8 @@ export async function vibeLoop(options = {}, injected = {}) {
       if (count >= maxUnits) { reason = 'max-units'; break }
       let status = await deps.status({ ...options, targetRoot: root, tag: options.tag })
       if (status.git?.fetchError) throw new SkillPackageError('원격 판정 실패', [status.git.fetchError])
+      // A design opened in this checkout meanwhile: its edits wait for the user, not for units.
+      if (status.route === 'design') { reason = 'design'; break }
       if (priorityTask && status.remaining && !status.remaining.some((task) => task.id === priorityTask)) priorityTask = null
       if (recovery && status.remaining && !status.remaining.some((task) => task.id === recovery.taskId)) recovery = null
       if (!recovery && status.implementation?.blocked?.length) {

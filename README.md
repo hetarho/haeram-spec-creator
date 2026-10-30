@@ -5,7 +5,7 @@
 Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제약, 결정 사항, 완료 조건을 먼저 명확히 하고 각 단계의 결과를 다음 단계의 입력으로 이어 가도록 돕습니다. 이 저장소의 핵심은 라이브러리 API가 아니라 AI 에이전트가 필요할 때 불러 쓰는 스킬이며, npm 패키지는 여러 프로젝트에 그 스킬을 안전하게 설치하고 동기화하기 위한 배포 수단입니다.
 
 > [!TIP]
-> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 사용자가 부르는 스킬은 둘입니다 — **`/start-vibe`**(작업 시작)와 **`/ideation`**(아이디어). 나머지 10종(`create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `doc-review` · `review-task` · `manage-work` · `create-narrative`)은 start-vibe가 골라 쓰며, 이름을 대고 직접 부를 수도 있습니다.
+> [npm에 배포되어 있어](https://www.npmjs.com/package/haeram-spec-creator) 바로 설치할 수 있습니다 — `npm install --save-dev haeram-spec-creator && npx haeram-spec-creator install`. 사용자가 부르는 스킬은 셋입니다 — **`/start-vibe`**(작업 시작), **`/start-design`**(화면 보며 디자인), **`/ideation`**(아이디어). 나머지 10종(`create-architecture` · `create-ssot` · `update-ssot` · `create-task` · `implement-task` · `review-code` · `doc-review` · `review-task` · `manage-work` · `create-narrative`)은 start-vibe가 골라 쓰며, 이름을 대고 직접 부를 수도 있습니다.
 
 ## 핵심 개념
 
@@ -22,6 +22,7 @@ Claude Code와 Codex가 바로 코드를 작성하기 전에 목표, 범위, 제
 | 순서 | 스킬 | 역할 | 하는 일 | 산출물 |
 | --- | --- | --- | --- | --- |
 | 진입점 | `start-vibe` | 진행자 | 원격의 다른 기기 진행 확인 → 모드 질문 → 다음 스킬 선택 → 태스크별 커밋·묶음별 push. 맡김이면 결정함·보고서 | STATE `## active`·`## inbox`, `spec/reports/` |
+| 디자인 | `start-design` | 디자인 진행자 | STATE를 디자인 중으로 바꾸고 말하는 대로 코드만 즉시 수정(테스트·커밋·push 없음) → 디자인 끝이면 전체 테스트 후 커밋 하나. 커밋·push 전엔 항상 디자인이 끝났는지 묻는다 | STATE `## design`, 디자인 커밋 |
 | 아이디어 | `ideation` | 기획 전문가 | 흐릿한 아이디어를 발산·수렴 루프로 함께 구체화, SSOT 전환용 도메인 분할까지 | `spec/ideation/<slug>.md` |
 | 0 | `create-architecture` | 엔지니어 | `spec/` 초기화 + 사용자 수준 캘리브레이션 + 아키텍처 인터뷰 | `spec/STATE.md` `spec/FORMAT.md` `spec/ssot/ARCH.md` |
 | 1 | `create-ssot` | 기획자 | 기획 인터뷰로 도메인 SSOT 작성 | `spec/ssot/<ID>.md` |
@@ -111,6 +112,19 @@ Claude Code나 Codex를 설치하려는 프로젝트에서 열고 다음 프롬�
 ```
 
 생각날 때마다 아이디어를 받아 적습니다. 더 이야기하고 싶으면 발산·수렴 루프를 돌고, 쌓인 문서는 `/start-vibe`가 기획으로 가져갑니다.
+
+### 디자인은 `/start-design`
+
+```text
+/start-design 랜딩 페이지 히어로 영역
+```
+
+화면을 띄워 두고 말하는 대로 바로 코드만 고치는 함께 모드 전용 흐름입니다.
+
+1. STATE에 `## design` 줄(`vibe design start`)을 남겨 이 checkout이 디자인 중임을 표시합니다. 개발 서버(hot reload)를 띄워 두고 결과를 실시간으로 봅니다.
+2. 디자인하는 동안에는 테스트·e2e·typecheck·커밋·push를 하지 않습니다. 디자인 줄이 있는 동안 `vibe push`는 거절되고, 맡김 preflight는 실패하며 `vibe loop`는 멈춥니다. 중간 저장이 필요하면 `vibe checkpoint`로 `wip/<tag>`에만 스냅샷합니다.
+3. 커밋·push가 필요해지면(직접 요청, 다른 스킬로 전환, 마감) 어떤 스킬이든 먼저 **"디자인 끝났나요?"** 를 묻습니다.
+4. 디자인이 끝나면 `vibe design verify`로 ARCH의 task·batch 명령 전부를 미커밋 작업 트리에서 한 번씩 돌립니다(빠른 검사가 실패하면 무거운 검사는 미룸, 같은 트리는 캐시). 디자인 때문에 바뀐 기대값은 테스트를 고치고, 깨진 기능은 코드를 고칩니다. 통과하면 `vibe design end` 후 디자인·테스트 수정·STATE log(`- YYMMDD design <area>: <what>`)를 커밋 하나로 남깁니다. push는 요청했거나 cfg push가 브랜치일 때만 합니다.
 
 ### 스킬을 직접 부르기
 
@@ -297,6 +311,9 @@ npx haeram-spec-creator vibe plan-push                # spec/만 담은 기획 �
 npx haeram-spec-creator vibe push                     # 원격을 합치고(STATE는 섹션 단위) cfg push 브랜치로 push
 npx haeram-spec-creator vibe claim --tag a1b2 --task T001 # 선점 정보만 공유하고 미검증 로컬 코드는 남김
 npx haeram-spec-creator vibe checkpoint --tag k3f9    # 작업 트리 스냅샷을 wip/k3f9로 (현재 브랜치는 그대로)
+npx haeram-spec-creator vibe design start --tag d7 --scope "landing hero"  # STATE를 디자인 중으로 (커밋하지 않음)
+npx haeram-spec-creator vibe design verify            # 디자인 마감: ARCH task·batch 명령 전부를 미커밋 트리에서
+npx haeram-spec-creator vibe design end               # 디자인 줄 삭제 — 이어서 커밋 하나
 npx haeram-spec-creator vibe check --tier batch -- pnpm run test:e2e   # 같은 트리에서 통과한 검사는 생략, 무거운 검사는 하나씩
 npx haeram-spec-creator vibe preflight --probe 'pnpm run test' --allow-tool 'Bash(pnpm run *)'
 ```

@@ -1,7 +1,7 @@
 import { verificationTiers } from './vibe-brief.mjs'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue, EXIT_LINE, SESSION_TAG, ISO_UTC, INBOX_LINE, REPORT_FILE, REPORT_SECTIONS, parseSsot, references, refId } from './spec-format.mjs'
+import { sections, tableRows, quoteLine, quoteFields, splitRefs, TASK_ID, TASK_ST, EXPLORE, exploreValue, EXIT_LINE, SESSION_TAG, ISO_UTC, INBOX_LINE, DESIGN_LINE, REPORT_FILE, REPORT_SECTIONS, parseSsot, references, refId } from './spec-format.mjs'
 import { touchesErrors } from './work-policy.mjs'
 import { dependencyErrors, laneErrors, laneValue } from './task-graph.mjs'
 
@@ -665,6 +665,19 @@ export async function lintSpec({ targetRoot } = {}) {
         warnings.push(`active ${tag}: ${doing}의 st(${stByTask.get(doing)})가 doing@날짜.${tag}가 아닙니다.`)
       }
     }
+  }
+
+  // design (optional): 이 checkout에서 열린 디자인 세션 한 줄. 사용자가 끝내면(start-design 마감) 지운다.
+  const designLines = (stateSections.get('design') ?? []).map((line) => line.trim()).filter(Boolean)
+  if (designLines.length > 1) errors.push(`design 줄은 하나입니다: ${designLines.length}줄`)
+  for (const line of designLines) {
+    const entry = line.match(DESIGN_LINE)
+    if (!entry) {
+      errors.push(`design 줄 형식 오류: "${line.slice(0, 60)}" (- since:<ISO> | tag:<tag> | scope:<text>)`)
+      continue
+    }
+    if (!ISO_UTC.test(entry[1])) errors.push(`design since는 ISO UTC(2026-10-13T07:44Z)여야 합니다: ${entry[1]}`)
+    if (!SESSION_TAG.test(entry[2])) errors.push(`design tag 형식 오류: ${entry[2]} (영숫자 2-8자)`)
   }
 
   // inbox (optional): 맡김 모드가 내린 잠정 결정·주차한 일. 참조는 실제로 있는 ID여야 한다.

@@ -12,6 +12,7 @@ export { runWork, recoverRunner } from './work-runner.mjs'
 export { inspectProviders, inspectOrca, workDoctor } from './work-providers.mjs'
 export { vibeStatus, vibeSync, vibePush, vibeClaim, vibeBeat, vibeCheckpoint, vibePreflight, vibeAwake, vibeCheck } from './vibe.mjs'
 export { mergeState } from './state-doc.mjs'
+export { vibeDesign } from './vibe-design.mjs'
 
 export { vibePlanSync, vibePlanPush } from './vibe-plan.mjs'
 export { vibeLoop, executeVibeUnit } from './vibe-loop.mjs'

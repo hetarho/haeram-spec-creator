@@ -36,7 +36,8 @@ export async function runVibeCheck(options = {}, command) {
     // A script may read HAERAM_* internally even if its invocation does not name
     // them. Standalone cache identity always includes the effective scope.
     const tree = await workingTree(root), key = `${checkKey(tree, command, scope)}\u0000${JSON.stringify(scope)}`
-    if (final && tree !== await commitTree(root, commit)) throw new SkillPackageError('최종 검증 전에 작업 트리를 커밋하세요. 조정자는 고정된 통합 결과를 검증합니다.')
+    // Design verification (vibe design verify) checks the uncommitted design before its one commit.
+    if (final && !options.uncommitted && tree !== await commitTree(root, commit)) throw new SkillPackageError('최종 검증 전에 작업 트리를 커밋하세요. 조정자는 고정된 통합 결과를 검증합니다.')
     const hit = !options.noCache && await cachedPass(runtime, key)
     if (hit) return { schemaVersion: 1, ok: true, exitCode: 0, cached: true, scope, commit, tree, log: hit.log ?? null, tail: [], failedTests: [] }
     const directory = path.join(runtime, 'logs')

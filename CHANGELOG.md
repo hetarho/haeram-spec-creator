@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- Add `start-design`, a pair-only live design mode. It marks the checkout as designing in a new optional STATE section `## design` (`- since:<ISO UTC> | tag:<tag> | scope:<text>`, kept uncommitted next to the edits), keeps a hot-reload dev server up and edits code exactly as the user describes — no tests, e2e, task files, SSOT edits, commits or pushes while the design is open. When the user says the design is finished it runs every test, then makes one commit with the design, its test updates and STATE log `- YYMMDD design <area>: <what>`.
+- Add `vibe design start|verify|end` (plain `vibe design` reports the open design). `start` resumes a design left open by an earlier conversation with its own since and tag. `verify` runs every ARCH task and batch command once on the uncommitted working tree at the batch tier, under the heavy lock and check cache; fast checks run first and a failure there skips the slow suites. `--verify <command>` overrides the batch commands.
+- Every skill now asks whether the design is finished before any commit or push while STATE `## design` exists (common rule 2). `vibe status` reports `design` and routes `design` first; start-vibe asks the user in pair and parks it in autopilot. `vibe push` refuses, autopilot preflight fails with a needs-user `design` check and `vibe loop` stops while a design is open. STATE merges union the design section; lint checks one well-formed design line.
+
 ## 0.7.7
 
 - Make one planning branch (STATE cfg `plan`, default `main`) the home of every task ID and planning document, whichever checkout or worktree plans. `vibe plan-sync` merges its latest before planning; `vibe plan-push` replays spec-only planning commits onto it (pushed when the remote has the branch, independent of cfg push; otherwise the clean local branch is fast-forwarded) and merges the result back so later task archiving cannot resurrect published tasks. A T### another checkout published first is refused with the colliding files, and the losing checkout renumbers. Commits touching code are refused. `plan: -` keeps the previous single-checkout behavior.

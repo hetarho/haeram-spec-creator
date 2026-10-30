@@ -3,10 +3,11 @@ import { vibePlanSync, vibePlanPush } from './vibe-plan.mjs'
 import { vibeLoop } from './vibe-loop.mjs'
 import { vibeCIWait } from './vibe-ci.mjs'
 import { vibeBrief, vibeFormat } from './vibe-brief.mjs'
+import { vibeDesign } from './vibe-design.mjs'
 import { renderBrief } from './spec-context.mjs'
 import { SkillPackageError } from './errors.mjs'
 
-const HELP = `세션 도구 (start-vibe가 사용)
+const HELP = `세션 도구 (start-vibe·start-design이 사용)
   vibe loop --tag <tag> --provider claude|codex [--model <name>] [--max-units 100] [--max-hours 8]
     [--batch-size 3] [--permission-mode acceptEdits|bypass] [--allow-tool <rule> ...]
     [--verify <batch command> ...] [--push-each-unit] [--detach] [--dry-run] [--adapter <json-file>] [--json]
@@ -28,6 +29,9 @@ const HELP = `세션 도구 (start-vibe가 사용)
   vibe beat --tag <tag> [--mode pair|autopilot] [--doing <T###|->] [--end]
                                                 STATE ## active의 이 세션 행 쓰기·갱신·삭제 (커밋은 호출자)
   vibe checkpoint --tag <tag> [--message <text>] 작업 트리 스냅샷을 wip/<tag>로 push (현재 브랜치는 그대로)
+  vibe design [start --tag <tag> [--scope <text>] | verify [--verify <command> ...] [--timeout-ms <ms>] | end]
+                                                디자인 모드(start-design): STATE ## design 줄 쓰기·전체 검증·삭제 (커밋은 호출자).
+                                                verify는 ARCH task·batch 명령 전부를 미커밋 작업 트리에서 한 번씩. 디자인 중 push·맡김은 거절
   vibe preflight [--probe <command> [--provider claude|codex] [--allow-tool <rule> ...]]
                                                 맡김 전 점검: push 권한·lint·절전 방지·CI 접근·헤드리스 워커 실측
   vibe awake [--hours <n>] | --stop             macOS caffeinate로 절전 방지
@@ -42,10 +46,10 @@ const allowed = {
   status: ['tag', 'remote', 'section'], sync: ['remote'], 'plan-sync': ['remote'], 'plan-push': ['remote', 'commit'], push: ['remote', 'diff-base', 'timeout-ms', 'no-run-ms', 'verified-commit'], beat: ['tag', 'mode', 'doing', 'host'],
   claim: ['tag', 'task', 'remote'],
   checkpoint: ['tag', 'message', 'remote'], preflight: ['remote', 'probe', 'provider', 'allow-tool', 'probe-timeout-ms', 'probe-workspace', 'permission-mode'],
-  awake: ['hours', 'remote'], check: ['tier', 'diff-base', 'task', 'timeout-ms'],
+  awake: ['hours', 'remote'], check: ['tier', 'diff-base', 'task', 'timeout-ms'], design: ['tag', 'scope', 'verify', 'timeout-ms'],
 }
 const flags = { loop: ['dry-run', 'detach', 'stop', 'push-each-unit'], push: ['wait-ci'], status: ['no-fetch'], beat: ['end'], awake: ['stop'], check: ['heavy', 'no-cache', 'allow-final'], brief: ['deep'] }
-const actions = { loop: vibeLoop, ci: vibeCIWait, brief: vibeBrief, format: vibeFormat, status: vibeStatus, sync: vibeSync, 'plan-sync': vibePlanSync, 'plan-push': vibePlanPush, push: vibePush, claim: vibeClaim, beat: vibeBeat, checkpoint: vibeCheckpoint, preflight: vibePreflight, awake: vibeAwake }
+const actions = { loop: vibeLoop, ci: vibeCIWait, brief: vibeBrief, format: vibeFormat, status: vibeStatus, sync: vibeSync, 'plan-sync': vibePlanSync, 'plan-push': vibePlanPush, push: vibePush, claim: vibeClaim, beat: vibeBeat, checkpoint: vibeCheckpoint, preflight: vibePreflight, awake: vibeAwake, design: vibeDesign }
 
 export async function runVibeCLI(args) {
   if (!args.length || args.includes('--help') || args.includes('-h')) { process.stdout.write(HELP); return }
@@ -60,6 +64,7 @@ export async function runVibeCLI(args) {
   if (action === 'ci' && args.shift() !== 'wait') throw new SkillPackageError('vibe ci wait [옵션]')
   const options = {}
   if (action === 'brief') while (args[0] && !args[0].startsWith('--')) (options.roots ??= []).push(args.shift())
+  if (action === 'design' && args[0] && !args[0].startsWith('--')) options.step = args.shift()
   let command = null
   while (args.length) {
     const argument = args.shift()

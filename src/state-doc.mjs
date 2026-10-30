@@ -1,5 +1,6 @@
 // STATE.md as ordered blocks: the preamble (title and quote lines) and one block per ## section.
 // Sessions on different clones push the same STATE, so it merges by section instead of by line.
+import { DESIGN_LINE } from './spec-format.mjs'
 
 export const ACTIVE_HEADER = ['| tag | host | mode | since | at | doing |', '|---|---|---|---|---|---|']
 const LOG_LIMIT = 20
@@ -73,6 +74,33 @@ export function upsertActive(text, row, { remove = false } = {}) {
   return renderState(blocks)
 }
 
+// The open design session (## design), or null. A malformed line still counts as open —
+// commits and pushes keep waiting for the user; lint reports the format.
+export function designOf(text) {
+  const line = parseState(text).find((entry) => entry.name === 'design')?.body.map((entry) => entry.trim()).find(Boolean)
+  if (!line) return null
+  const [, since = null, tag = null, scope = null] = line.match(DESIGN_LINE) ?? []
+  return { since, tag, scope, line }
+}
+
+// Write or remove the design line. A new section goes after active, else after cfg.
+export function setDesign(text, entry) {
+  const blocks = parseState(text)
+  const index = blocks.findIndex((block) => block.name === 'design')
+  if (!entry) {
+    if (index === -1) return text
+    blocks.splice(index, 1)
+    return renderState(blocks)
+  }
+  const block = { name: 'design', body: [`- since:${entry.since} | tag:${entry.tag} | scope:${entry.scope}`] }
+  if (index !== -1) blocks[index] = block
+  else {
+    const after = ['active', 'cfg'].map((name) => blocks.findIndex((entry) => entry.name === name)).find((position) => position !== -1)
+    blocks.splice(after === undefined ? 1 : after + 1, 0, block)
+  }
+  return renderState(blocks)
+}
+
 const same = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
 const dated = (line) => line.match(/^- (\d{6})\b/)?.[1] ?? ''
 
@@ -135,7 +163,7 @@ const TABLES = new Set(['active', 'ideation', 'ssot', 'review', 'tasks', 'work']
 
 function mergeSection(name, base, ours, theirs) {
   if (name === 'log') return mergeLog(base, ours, theirs)
-  if (name === 'inbox' || name === 'next') return unionLines(base, ours, theirs)
+  if (name === 'inbox' || name === 'next' || name === 'design') return unionLines(base, ours, theirs)
   if (name === 'cfg') return mergeCfg(base, ours, theirs)
   if (TABLES.has(name)) return mergeTable(name, base, ours, theirs)
   return null

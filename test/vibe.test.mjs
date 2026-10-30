@@ -10,6 +10,7 @@ import { mergeState, upsertActive, activeRows } from '../src/state-doc.mjs'
 import { vibeStatus, vibeSync, vibePush, vibeClaim, vibeBeat, vibeCheckpoint, vibePreflight, vibeCheck } from '../src/vibe.mjs'
 import { withHeavyLock } from '../src/check-cache.mjs'
 import { lintSpec } from '../src/spec-lint.mjs'
+import { vibeDesign } from '../src/vibe-design.mjs'
 
 const execute = promisify(execFile)
 const cli = fileURLToPath(new URL('../bin/haeram-spec-creator.mjs', import.meta.url))
@@ -308,6 +309,19 @@ test('preflight는 push 대상이 없으면 커밋만으로 보고 묻지 않는
   const result = await vibePreflight({ targetRoot: ready })
   assert.equal(result.checks.find((check) => check.name === 'push-permission').ok, true)
   assert.deepEqual(result.needsUser.filter((check) => check.name !== 'ci-access'), [])
+})
+
+test('디자인 중에는 push를 거절하고 맡김 preflight는 사람을 기다린다', async (t) => {
+  const { a } = await machines(t)
+  await vibeDesign({ targetRoot: a, step: 'start', tag: 'k3f9', scope: 'hero' })
+  await assert.rejects(vibePush({ targetRoot: a }), /디자인 중/)
+  const preflight = await vibePreflight({ targetRoot: a })
+  assert.equal(preflight.ok, false)
+  assert.match(preflight.checks.find((check) => check.name === 'design').detail, /k3f9/)
+  assert.ok(preflight.needsUser.some((check) => check.name === 'design'))
+  await vibeDesign({ targetRoot: a, step: 'end' })
+  assert.equal((await vibePreflight({ targetRoot: a })).checks.find((check) => check.name === 'design').ok, true)
+  assert.equal((await vibePush({ targetRoot: a })).ok, true)
 })
 
 test('preflight --probe는 새 worktree의 헤드리스 워커로 명령 실행 권한을 실측한다', async (t) => {
